@@ -1,6 +1,6 @@
 {
   "name": "starbridge-remote",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Windows remote assistance with explicit host approval",
   "private": true,
   "main": "desktop/main.cjs",

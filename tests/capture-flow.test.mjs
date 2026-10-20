@@ -99,3 +99,11 @@ test('disconnect during source enumeration revokes an in-flight capture',async()
   resolveSources(h.sources); await pending;
   assert.equal(selected,null);
 });
+test('fullscreen is confined to the local main document and does not grant capture',async()=>{
+  const h=await fixture();
+  assert.equal(h.request(h.details,'fullscreen'),true);
+  assert.equal(h.request({...h.details,isMainFrame:false},'fullscreen'),false);
+  assert.equal(h.request({...h.details,requestingUrl:'https://untrusted.example'},'fullscreen'),false);
+  assert.equal(h.request(h.details,'automatic-fullscreen'),false);
+  assert.equal(h.request(),false);
+});

@@ -135,7 +135,8 @@ ipcMain.on('indicator:stop',event=>{if(event.sender===indicator?.webContents){em
 app.whenReady().then(async()=>{
   const captureArmed=()=>captureAllowed&&!!gate.active&&Date.now()<capturePendingUntil;
   const permissionAllowed=(phase,webContents,permission,details)=>{
-    const allowed=allowCapturePermission({phase,webContents,permission,details,expectedWebContents:mainWindow?.webContents,uiUrl,armed:captureArmed(),electronMajor});
+    const ownMainFrame=webContents===mainWindow?.webContents&&details?.isMainFrame===true&&details?.requestingUrl===uiUrl;
+    const allowed=(permission==='fullscreen'&&ownMainFrame)||allowCapturePermission({phase,webContents,permission,details,expectedWebContents:mainWindow?.webContents,uiUrl,armed:captureArmed(),electronMajor});
     if(permission==='media'||permission==='display-capture')diagnostic('permission-'+phase,{name:permission,message:JSON.stringify({allowed,armed:captureArmed(),ownWindow:webContents===mainWindow?.webContents,mainFrame:details?.isMainFrame,ownDocument:details?.requestingUrl===uiUrl,mediaTypes:details?.mediaTypes,mediaType:details?.mediaType})});
     return allowed;
   };
