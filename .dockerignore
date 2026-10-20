@@ -4,5 +4,8 @@ runtime
 .git
 tests
 *.zip
+.env
+**/.env
+data
 
 backup-before-*/

@@ -37,8 +37,8 @@ services:
       - --min-port=49160
       - --max-port=49200
       - --no-tls
-      - --no-dtls
-      - --no-cli
+      - --dtls=0
+      - --cli=0
       - --no-multicast-peers
       - --denied-peer-ip=0.0.0.0-0.255.255.255
       - --denied-peer-ip=10.0.0.0-10.255.255.255
