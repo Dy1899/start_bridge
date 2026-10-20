@@ -1,0 +1,44 @@
+# 星桥远控 0.1.3
+
+Windows 10/11 x64 桌面远程协助原型。使用自己的输入组件与连接服务，不依赖向日葵安装文件、账户或服务器。
+
+## 软件版使用
+
+解压整个软件文件夹后打开 `StarBridge.exe`。请保留旁边的 DLL 和 resources 文件夹。
+
+先在一台电脑上双击 `Start-local-server.cmd` 启动本机测试服务，再打开两个软件窗口。默认服务地址 `ws://127.0.0.1:8787` 只用于同一台电脑测试，建议先勾选“仅允许观看”。
+
+连接过程：输入对方 9 位识别码和 8 位临时访问码 → 被控端确认 → 被控端点击开始共享。共享时有常驻结束条；被控端可按 Ctrl+Alt+F12 断开。关闭窗口会结束远程会话。
+
+同一路由器下的两台电脑：只在一台运行 `启动局域网服务.cmd`，两边的连接设置填写该窗口显示的同一个内网地址。详见 `docs/局域网测试.md`。内网测试使用 ws:// 连接协商，仅适合你信任的网络。
+
+两台异地电脑需要先部署公网连接服务和 TURN 中继，再在双方“连接设置”中填相同的 `wss://域名`。详见源码包的 `deploy/部署说明.md`。本机测试成功不等于公网部署成功。
+
+## 从源码运行
+
+安装 Node.js 24 与 npm，在此目录运行：
+
+```
+npm ci
+npm run build:native
+npm run server
+```
+
+另开终端运行 `npm start`。Windows 输入组件使用系统 .NET Framework 4.x C# 编译器；不需要管理员权限。`npm test` 检查信令授权、断线清理、会话权限、坐标换算及原生组件的无操作验证模式。`npm run package:win` 生成 Windows 文件夹版。
+
+## 范围与限制
+
+- 支持手动确认的屏幕共享、鼠标移动/按键/滚轮和常用键盘按键，可选系统声音。
+- 不支持 UAC 与登录安全桌面、远程提权、文件传输、剪贴板同步、开机自启、无人值守或 PS5 Remote Play。
+- 非美式键盘布局、中文输入法、左右修饰键、混合 DPI 多屏和系统声音需要在真实设备上进一步验证。
+- 程序与输入组件没有商业代码签名，Windows 可能显示来源确认。当前为原型，不应视为成熟商业远控替代品。
+- 当前未配置或部署任何公网服务。首次公网部署后，需要用两台异地电脑验证直连与强制中继。
+- 配置与浏览器缓存保存在程序同目录的 data 文件夹，因此请解压到自己有写入权限的目录。
+
+## 实现与分析来源
+
+Electron 负责桌面界面与屏幕采集；WebRTC 负责画面和控制通道；独立 C# 组件调用 Windows SendInput；Node.js 服务协调连接；coturn 提供公网中继。
+
+对本机向日葵文件的静态研究帮助确认了输入 API 的研究方向；本项目没有复制其伪代码、协议常量或二进制模块。
+
+官方资料：[Electron 屏幕采集](https://www.electronjs.org/docs/latest/api/desktop-capturer)、[Windows SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)、[WebRTC](https://webrtc.org/getting-started/overview)。

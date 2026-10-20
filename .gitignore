@@ -1,0 +1,11 @@
+node_modules/
+build/
+.env
+runtime/
+*.log
+
+backup-before-*/
+.workspace
+data/
+native/*.exe
+native/*.pdb
