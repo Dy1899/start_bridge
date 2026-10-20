@@ -1,7 +1,7 @@
 import {normalizedPoint} from './geometry.mjs';
 import {startSharing,describeShareError} from './share-start.mjs';
 import {VIDEO_PROFILES,DEFAULT_PROFILE,isVideoProfile,videoConstraints,applyVideoProfile,preferLowDelay,videoMetrics,withLanStartupBitrate} from './media-quality.mjs';
-import {PointerOrder} from './pointer-order.mjs';
+import {PointerOrder,clickPosition} from './pointer-order.mjs';
 const $=id=>document.getElementById(id),show=(id,on=true)=>$(id).classList.toggle('hidden',!on);
 window.__uiErrors=[];
 window.addEventListener('error',e=>window.__uiErrors.push(e.message));
@@ -96,6 +96,7 @@ function attachChannel(dc){
         if(command.type==='media-hello'){sendMediaState();return;}
         if(command.type==='media-quality'){if(isVideoProfile(command.profile))changeHostQuality(command.profile);return;}
         if(command.type==='move'&&!pointerOrder.accept(command))return;
+        const position=clickPosition(command);if(position)window.bridge.input(sessionInfo.sessionId,position);
         window.bridge.input(sessionInfo.sessionId,command);
       }else if(sessionInfo?.role==='controller'&&command.type==='media-state'&&command.protocol===1&&isVideoProfile(command.profile)){
         clearTimeout(qualityRequestTimer);remoteMediaSupport=true;$('session-quality').disabled=false;$('session-quality').value=command.profile;
@@ -199,8 +200,8 @@ $('settings-form').addEventListener('submit',async event=>{event.preventDefault(
 const video=$('remote-video');
 function point(event,clamp=false){return normalizedPoint(video.getBoundingClientRect(),video.videoWidth,video.videoHeight,event.clientX,event.clientY,clamp);}
 video.addEventListener('pointermove',event=>{const now=performance.now();if(now-lastMove<8)return;const p=point(event,dragging);if(p){transmit({type:'move',...p});lastMove=now;}});
-video.addEventListener('pointerdown',event=>{const p=point(event);if(!p)return;event.preventDefault();video.focus();video.setPointerCapture(event.pointerId);dragging=true;transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'down'});});
-video.addEventListener('pointerup',event=>{const p=point(event,true);if(p)transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'up'});dragging=false;});
+video.addEventListener('pointerdown',event=>{const p=point(event);if(!p)return;event.preventDefault();video.focus();video.setPointerCapture(event.pointerId);dragging=true;transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'down',...p});});
+video.addEventListener('pointerup',event=>{const p=point(event,true);if(p)transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'up',...(p||{})});dragging=false;});
 video.addEventListener('pointercancel',releaseInputs);video.addEventListener('contextmenu',event=>event.preventDefault());
 video.addEventListener('wheel',event=>{if(!point(event))return;event.preventDefault();transmit({type:'wheel',delta:event.deltaY<0?120:-120});},{passive:false});
 video.addEventListener('keydown',event=>{if(!$('capture-keys').checked)return;event.preventDefault();if(!event.repeat&&!heldKeys.has(event.code)){heldKeys.add(event.code);transmit({type:'key',code:event.code,state:'down'});}});

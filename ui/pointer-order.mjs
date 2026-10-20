@@ -10,3 +10,7 @@ export class PointerOrder {
     this.last=command.seq;this.sequenced=true;return true;
   }
 }
+export function clickPosition(command){
+  if(command?.type!=='button'||!Number.isFinite(command.x)||command.x<0||command.x>1||!Number.isFinite(command.y)||command.y<0||command.y>1)return null;
+  return {type:'move',x:command.x,y:command.y};
+}

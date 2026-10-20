@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applyVideoProfile,videoConstraints,preferLowDelay,videoMetrics,withLanStartupBitrate} from '../ui/media-quality.mjs';
-import {PointerOrder} from '../ui/pointer-order.mjs';
+import {PointerOrder,clickPosition} from '../ui/pointer-order.mjs';
 
 test('negotiated video applies the capture and encoder budget together; failures are reported',async()=>{
   let resized,applied;
@@ -29,6 +29,7 @@ test('a delayed unordered pointer cannot override a newer reliable click positio
   assert.equal(order.accept({type:'key',code:'KeyA'},true),false);assert.equal(order.accept({...move(5),x:Infinity},true),false);assert.equal(order.accept({...move(5),seq:1.5}),false);
   assert.equal(order.accept({type:'move',x:0,y:0}),false);
   const legacy=new PointerOrder();assert.equal(legacy.accept({type:'move',x:0,y:0}),true);assert.equal(legacy.accept({type:'move',x:0,y:0},true),false);
+  assert.deepEqual(clickPosition({type:'button',button:'left',state:'down',x:0.7,y:0.8}),{type:'move',x:0.7,y:0.8});assert.equal(clickPosition({type:'button',x:100,y:0}),null);assert.equal(clickPosition({type:'key',x:0,y:0}),null);
 });
 test('LAN startup hint affects only primary video codecs and survives repeated processing',()=>{
   const audio='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10\r\n';

@@ -19,6 +19,8 @@ try{
   const fast=controller.__channels.find(c=>c.label==='pointer'),reliable=controller.__channels.find(c=>c.label==='control');
   fast.send(JSON.stringify({type:'move',seq:1,x:0.1,y:0.1}));reliable.send(JSON.stringify({type:'move',seq:3,x:0.7,y:0.7}));reliable.send(JSON.stringify({type:'button',button:'left',state:'down'}));reliable.send(JSON.stringify({type:'button',button:'left',state:'up'}));await pause(80);fast.send(JSON.stringify({type:'move',seq:2,x:0.2,y:0.2}));await pause(300);
   if(host.__inputs.some(c=>c.type==='move'&&c.seq===2)||!host.__inputs.some(c=>c.type==='button'&&c.state==='up'))throw Error('Pointer order failed');result.inputOrder=true;
+  fast.send(JSON.stringify({type:'move',seq:5,x:0.9,y:0.9}));await pause(80);reliable.send(JSON.stringify({type:'move',seq:4,x:0.7,y:0.7}));reliable.send(JSON.stringify({type:'button',button:'left',state:'down',x:0.7,y:0.7}));reliable.send(JSON.stringify({type:'button',button:'left',state:'up',x:0.7,y:0.7}));await pause(150);
+  const clickIndex=host.__inputs.findLastIndex(c=>c.type==='button'&&c.state==='down');if(host.__inputs[clickIndex-1]?.x!==0.7||host.__inputs[clickIndex-1]?.y!==0.7)throw Error('A later hover changed the reliable click position');result.clickPosition=true;
   for(const [profile,bitrate,width] of [['smooth',8000000,1280],['detail',18000000,2560]]){
     c('session-quality').value=profile;c('session-quality').dispatchEvent(new controller.Event('change'));
     await until(()=>h('session-quality').value===profile&&!h('session-quality').disabled&&!c('session-quality').disabled,'profile '+profile);
