@@ -7,6 +7,12 @@ export class PerformanceView{
   constructor(document,saveReport,toast,now=Date.now){
     this.document=document;this.saveReport=saveReport;this.toast=toast;this.now=now;this.history=[];this.active=false;
     for(const id of ['save-performance','save-last-performance'])document.getElementById(id).addEventListener('click',()=>this.save());
+    const panel=document.getElementById('performance-panel');
+    document.getElementById('close-performance').addEventListener('click',()=>{
+      panel.open=false;panel.scrollTop=0;
+      document.getElementById('performance-summary').focus({preventScroll:true});
+    });
+    panel.addEventListener('toggle',()=>{if(!panel.open)panel.scrollTop=0;});
   }
   text(id,value){this.document.getElementById(id).textContent=value;}
   start(role,profile,codecPreference){this.role=role;this.profile=profile;this.codecPreference=codecPreference;this.targetFps=null;this.local=null;this.remote=null;this.remoteAt=0;this.remoteSequence=0;this.history=[];this.active=true;this.document.getElementById('save-last-performance').classList.toggle('hidden',true);this.render();}
