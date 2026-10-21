@@ -12,9 +12,10 @@ const mainFile = fileURLToPath(new URL('../desktop/main.cjs', import.meta.url));
 const code = await fs.readFile(mainFile, 'utf8');
 const control = require('../desktop/control.cjs');
 const permissions = require('../desktop/capture-permissions.cjs');
+const reports = require('../desktop/performance-report.cjs');
 
 async function fixture() {
-  const state = { now:1000, windows:[], handlers:new Map(), logs:[], sources:[{ id:'screen:0:0', name:'Screen 1', display_id:'1' }] };
+  const state = { now:1000, windows:[], handlers:new Map(), logs:[], writes:[], sources:[{ id:'screen:0:0', name:'Screen 1', display_id:'1' }] };
   class Window extends EventEmitter {
     constructor(options) {
       super(); this.options=options; this.destroyed=false;
@@ -41,9 +42,9 @@ async function fixture() {
     session:{ defaultSession:{ setPermissionRequestHandler:fn=>state.permissionRequest=fn, setPermissionCheckHandler:fn=>state.permissionCheck=fn, setDisplayMediaRequestHandler:fn=>state.display=fn } },
     dialog:{ showMessageBox:async()=>({response:1}) }, globalShortcut:{ register(){}, unregister(){} }, clipboard:{ writeText(){} }
   };
-  const mockFs={ mkdirSync(){}, existsSync:()=>true, statSync:()=>({size:0}), appendFileSync:(_,text)=>state.logs.push(JSON.parse(text)), readFileSync(){throw Error('No saved settings');}, writeFileSync(){} };
+  const mockFs={ mkdirSync(){}, existsSync:()=>true, statSync:()=>({size:0}), appendFileSync:(_,text)=>state.logs.push(JSON.parse(text)), readFileSync(){throw Error('No saved settings');}, writeFileSync:(file,text,options)=>state.writes.push({file,text,options}) };
   class Clock extends Date { static now() { return state.now; } }
-  const modules={ electron, 'node:path':path, 'node:fs':mockFs, 'node:os':{hostname:()=> 'Test PC'}, 'node:child_process':{spawn(){throw Error('Read-only capture must not start input');}}, 'node:crypto':{randomUUID}, 'node:url':{pathToFileURL}, './control.cjs':control, './capture-permissions.cjs':permissions };
+  const modules={ electron, 'node:path':path, 'node:fs':mockFs, 'node:os':{hostname:()=> 'Test PC'}, 'node:child_process':{spawn(){throw Error('Read-only capture must not start input');}}, 'node:crypto':{randomUUID}, 'node:url':{pathToFileURL}, './control.cjs':control, './capture-permissions.cjs':permissions, './performance-report.cjs':reports };
   vm.runInNewContext(code,{ require:name=>{if(!(name in modules))throw Error(name);return modules[name];}, __dirname:path.dirname(mainFile), process:{env:{},execPath:'C:/StarBridge/StarBridge.exe',pid:1,argv:[],platform:'win32',versions:{electron:'44.9.1'}}, Date:Clock, setInterval:()=>1, clearInterval(){}, setTimeout:()=>({unref(){}}) },{filename:mainFile});
   await state.ready;
   const wc=state.windows[0].webContents;
@@ -106,4 +107,11 @@ test('fullscreen is confined to the local main document and does not grant captu
   assert.equal(h.request({...h.details,requestingUrl:'https://untrusted.example'},'fullscreen'),false);
   assert.equal(h.request(h.details,'automatic-fullscreen'),false);
   assert.equal(h.request(),false);
+});
+test('performance exports require the trusted document and use an app-owned unique file',async()=>{
+  const h=await fixture(),save=h.handlers.get('performance:save');
+  const report={role:'controller',profile:'balanced',codecPreference:'auto',filePath:'C:/outside.json',secret:'should disappear',samples:[{at:100,local:{direction:'receive',codec:'video/VP8',width:1920,password:'private'},remote:{direction:'send'}}]};
+  assert.throws(()=>save({...h.event,sender:{}},report),/来源/);
+  const result=save(h.event,report);assert.match(result.name,/^performance-.*\.json$/);assert.equal(h.writes.length,1);assert.equal(h.writes[0].options.flag,'wx');assert.equal(path.basename(path.dirname(h.writes[0].file)),'reports');
+  const body=JSON.parse(h.writes[0].text);assert.equal(body.samples[0].local.width,1920);assert.equal('filePath' in body,false);assert.equal('secret' in body,false);assert.equal('password' in body.samples[0].local,false);
 });

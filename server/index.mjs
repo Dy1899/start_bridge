@@ -24,7 +24,7 @@ export function createSignalingServer(options = {}) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (req.url === '/healthz') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, version: '0.1.4', turnConfigured: !!env.TURN_SECRET && !!env.TURN_URLS }));
+      res.end(JSON.stringify({ ok: true, version: '0.1.5', turnConfigured: !!env.TURN_SECRET && !!env.TURN_URLS }));
     } else { res.writeHead(404); res.end('Not found'); }
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 128 * 1024, perMessageDeflate: false });

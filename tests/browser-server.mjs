@@ -1,6 +1,6 @@
 import http from 'node:http';import fs from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';import {createSignalingServer} from '../server/index.mjs';
 const root=fileURLToPath(new URL('..',import.meta.url));const signal=createSignalingServer({env:{}});await signal.listen(17887);
-const files=new Map(['/style.css','/app.js','/geometry.mjs','/share-start.mjs','/media-quality.mjs','/pointer-order.mjs'].map(name=>[name,path.join(root,'ui',name.slice(1))]));
+const files=new Map(['/style.css','/app.js','/geometry.mjs','/share-start.mjs','/media-quality.mjs','/pointer-order.mjs','/codec-preference.mjs','/performance.mjs','/performance-view.mjs'].map(name=>[name,path.join(root,'ui',name.slice(1))]));
 const fixture=`window.bridge={info:async()=>({version:'0.1.0',deviceName:'界面测试电脑',serverUrl:'ws://127.0.0.1:17887/signal',relayOnly:false}),screens:async()=>[{id:'fixture',name:'测试屏幕'}],saveSettings:async v=>v,copy:async()=>true,onEvent:()=>()=>{},stopHost:async()=>true,approve:async()=>({accepted:false}),beginHost:async()=>{throw Error('UI fixture cannot share a real desktop')},input:()=>{throw Error('UI fixture cannot inject input')}};`;
 const browser=http.createServer(async(req,res)=>{try{
   const url=new URL(req.url,'http://localhost');

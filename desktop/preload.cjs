@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('bridge',{
   beginHost:request=>ipcRenderer.invoke('host:begin',request),
   hostStarted:request=>ipcRenderer.invoke('host:started',request),
   diagnostic:entry=>ipcRenderer.invoke('diagnostic:record',entry),
+  savePerformance:value=>ipcRenderer.invoke('performance:save',value),
   stopHost:()=>ipcRenderer.invoke('host:stop'),
   input:(sessionId,command)=>ipcRenderer.send('input:send',sessionId,command),
   copy:text=>ipcRenderer.invoke('clipboard:copy',text),

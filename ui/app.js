@@ -1,15 +1,21 @@
 import {normalizedPoint} from './geometry.mjs';
 import {startSharing,describeShareError} from './share-start.mjs';
-import {VIDEO_PROFILES,DEFAULT_PROFILE,isVideoProfile,videoConstraints,applyVideoProfile,preferLowDelay,videoMetrics,withLanStartupBitrate} from './media-quality.mjs';
+import {VIDEO_PROFILES,DEFAULT_PROFILE,isVideoProfile,videoConstraints,applyVideoProfile,preferLowDelay,withLanStartupBitrate} from './media-quality.mjs';
 import {PointerOrder,clickPosition} from './pointer-order.mjs';
+import {CODEC_PREFERENCES,isCodecPreference,applyCodecPreference} from './codec-preference.mjs';
+import {readPerformanceStats} from './performance.mjs';
+import {PerformanceView} from './performance-view.mjs';
 const $=id=>document.getElementById(id),show=(id,on=true)=>$(id).classList.toggle('hidden',!on);
 window.__uiErrors=[];
 window.addEventListener('error',e=>window.__uiErrors.push(e.message));
 window.addEventListener('unhandledrejection',e=>{window.__uiErrors.push(String(e.reason));toast(String(e.reason?.message||e.reason),true);});
 let settings,ws,registered=false,reconnectTimer,peer,channel,stream,sessionInfo,incoming,grantId,statsTimer,startedAt,connectionTimer,inbox=Promise.resolve(),stopping=false;
 let lastMove=0,dragging=false,localFailure=null,pointerChannel,moveSequence=0,pointerOrder=new PointerOrder();
-let activeProfile=DEFAULT_PROFILE,qualityBusy=false,remoteMediaSupport=false,lastVideoStat=null,lastDiagnostic=0,qualityRequestTimer;
+let activeProfile=DEFAULT_PROFILE,qualityBusy=false,remoteMediaSupport=false,lastDiagnostic=0,qualityRequestTimer;
+let performanceReference=null,performanceSequence=0,performancePeer=false;
+const performanceView=new PerformanceView(document,value=>window.bridge.savePerformance(value),toast);
 for(const id of ['share-quality','session-quality'])for(const [value,p] of Object.entries(VIDEO_PROFILES)){const option=document.createElement('option');option.value=value;option.textContent=p.label;$(id).append(option);$(id).value=DEFAULT_PROFILE;}
+for(const [value,label] of Object.entries(CODEC_PREFERENCES)){const option=document.createElement('option');option.value=value;option.textContent=label;$('share-codec').append(option);}
 const heldKeys=new Set();
 function toast(message,error=false){$('toast').textContent=message;$('toast').classList.toggle('error',error);show('toast');clearTimeout(toast.timer);toast.timer=setTimeout(()=>show('toast',false),6000);}
 function failure(message,error,phase='share-start'){
@@ -45,7 +51,8 @@ async function handle(m){
     localFailure=null;show('error-panel',false);sessionInfo=m;startedAt=Date.now();tab('home');show('idle-grid',false);show('session-panel');show('cancel-request',false);
     $('peer-name').textContent=m.peerName;$('connection-mode').textContent=m.viewOnly?'仅观看':'可控制';$('connect-button').disabled=true;
     show('remote-stage',m.role==='controller');show('host-message',m.role==='host');show('start-share',m.role==='host');$('host-message').querySelector('h3').textContent='你正在提供远程协助';show('keyboard-option',m.role==='controller'&&!m.viewOnly);
-    activeProfile=$('share-quality').value;remoteMediaSupport=false;lastVideoStat=null;lastDiagnostic=0;pointerOrder=new PointerOrder();moveSequence=0;lastMove=0;
+    activeProfile=$('share-quality').value;remoteMediaSupport=false;lastDiagnostic=0;pointerOrder=new PointerOrder();moveSequence=0;lastMove=0;
+    performanceReference=null;performanceSequence=0;performancePeer=false;performanceView.start(m.role,activeProfile,$('share-codec').value);
     $('session-quality').value=activeProfile;$('session-quality').disabled=m.role==='controller';show('fullscreen',m.role==='controller');
     $('quality-status').textContent=m.role==='host'?'目标画质，实际以连接状态为准':'画质切换需要对方使用新版；连接后自动检测';
     if(m.role==='controller'){await createPeer();}else if(!grantId){throw new Error('本机授权已失效，请重新连接');}
@@ -87,18 +94,21 @@ function attachChannel(dc){
   }
   if(dc.label!=='control'||channel){dc.close();return;}
   channel=dc;
-  dc.onopen=()=>{if(sessionInfo?.role==='host')sendMediaState();else sendControl({type:'media-hello'});};
+  dc.onopen=()=>{if(sessionInfo?.role==='host')sendMediaState();else sendControl({type:'media-hello',performance:1});};
   dc.onmessage=event=>{
     if(typeof event.data!=='string'||event.data.length>2048)return;
     try{
       const command=JSON.parse(event.data);
+      if(command?.type==='performance'&&command.version===1){performanceView.acceptRemote(command.sample,command.sequence);return;}
       if(sessionInfo?.role==='host'){
-        if(command.type==='media-hello'){sendMediaState();return;}
+        if(command.type==='media-hello'){performancePeer=command.performance===1;sendMediaState();return;}
         if(command.type==='media-quality'){if(isVideoProfile(command.profile))changeHostQuality(command.profile);return;}
         if(command.type==='move'&&!pointerOrder.accept(command))return;
         const position=clickPosition(command);if(position)window.bridge.input(sessionInfo.sessionId,position);
         window.bridge.input(sessionInfo.sessionId,command);
       }else if(sessionInfo?.role==='controller'&&command.type==='media-state'&&command.protocol===1&&isVideoProfile(command.profile)){
+        performancePeer=command.performance===1;
+        activeProfile=command.profile;
         clearTimeout(qualityRequestTimer);remoteMediaSupport=true;$('session-quality').disabled=false;$('session-quality').value=command.profile;
         $('quality-status').textContent=command.error||'可随时切换画质；显示的分辨率和帧率为实际接收值';
         if(command.pointer===true&&!pointerChannel){pointerChannel=peer.createDataChannel('pointer',{ordered:false,maxRetransmits:0});pointerChannel.onclose=()=>{pointerChannel=null;};}
@@ -108,7 +118,7 @@ function attachChannel(dc){
   dc.onclose=()=>{releaseInputs();if(sessionInfo)endSession(true);};
 }
 function sendControl(command){if(channel?.readyState==='open')channel.send(JSON.stringify(command));}
-function sendMediaState(error=''){sendControl({type:'media-state',protocol:1,profile:activeProfile,pointer:true,error});}
+function sendMediaState(error=''){sendControl({type:'media-state',protocol:1,profile:activeProfile,pointer:true,performance:1,error});}
 async function changeHostQuality(id){
   if(!isVideoProfile(id)||sessionInfo?.role!=='host')return;
   if(qualityBusy===peer){sendMediaState('正在切换画质，请稍后再试');return;}
@@ -147,9 +157,12 @@ $('start-share').addEventListener('click',async()=>{
       connect:async media=>{
         await createPeer();
         for(const track of media.getTracks()){
-          peer.addTrack(track,media);
+          const sender=peer.addTrack(track,media);
           if(track.kind==='video'){
             track.contentHint=VIDEO_PROFILES[activeProfile].hint;
+            const preference=$('share-codec').value,result=applyCodecPreference(peer,sender,preference);
+            window.bridge.diagnostic?.({phase:'codec-preference',message:JSON.stringify({preference,...result})}).catch(()=>{});
+            if(preference!=='auto'&&!result.applied)toast('所选编码偏好不可用，已沿用系统默认；可在性能详情查看实际编码。');
           }
           track.onended=()=>endSession(true,'capture-ended');
         }
@@ -182,7 +195,7 @@ function transmit(command){
 function releaseInputs(){heldKeys.clear();dragging=false;if(channel?.readyState==='open'&&sessionInfo?.role==='controller')channel.send(JSON.stringify({type:'release'}));}
 async function endSession(notify,reasonCode='user-stop'){
   if(stopping)return;stopping=true;
-  try{if(notify)send({type:'disconnect',reasonCode});releaseInputs();await window.bridge.stopHost();sessionInfo=null;grantId=null;incoming=null;clearInterval(statsTimer);clearTimeout(connectionTimer);clearTimeout(qualityRequestTimer);if(channel){channel.onclose=null;}if(pointerChannel){pointerChannel.onclose=null;pointerChannel.close();}pointerChannel=null;if(peer){peer.onconnectionstatechange=null;peer.close();}peer=null;if(channel)channel.close();channel=null;if(stream){for(const t of stream.getTracks()){t.onended=null;t.stop();}}stream=null;$('remote-video').srcObject=null;show('stage-placeholder');show('session-panel',false);show('idle-grid');$('connect-button').disabled=!registered;$('rotate').disabled=!registered;$('start-share').disabled=false;if($('incoming-dialog').open)$('incoming-dialog').close();lastVideoStat=null;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
+  try{if(notify)send({type:'disconnect',reasonCode});releaseInputs();await window.bridge.stopHost();sessionInfo=null;grantId=null;incoming=null;clearInterval(statsTimer);clearTimeout(connectionTimer);clearTimeout(qualityRequestTimer);performanceView.end();if(channel){channel.onclose=null;}if(pointerChannel){pointerChannel.onclose=null;pointerChannel.close();}pointerChannel=null;if(peer){peer.onconnectionstatechange=null;peer.close();}peer=null;if(channel)channel.close();channel=null;if(stream){for(const t of stream.getTracks()){t.onended=null;t.stop();}}stream=null;$('remote-video').srcObject=null;show('stage-placeholder');show('session-panel',false);show('idle-grid');$('connect-button').disabled=!registered;$('rotate').disabled=!registered;$('start-share').disabled=false;if($('incoming-dialog').open)$('incoming-dialog').close();performanceReference=null;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
   finally{stopping=false;}
 }
 $('connect-form').addEventListener('submit',event=>{event.preventDefault();if(!registered||sessionInfo)return;const peerId=$('target-id').value.replace(/\s/g,''),secret=$('target-secret').value.trim();if(!/^\d{9}$/.test(peerId)||!/^\d{8}$/.test(secret)){toast('请输入 9 位识别码和 8 位访问码',true);return;}send({type:'connect',peerId,secret});$('target-secret').value='';});
@@ -196,7 +209,8 @@ $('approve').addEventListener('click',async()=>{
   const request=incoming;if(!request)return;$('approve').disabled=true;
   try{const result=await window.bridge.approve({...request,sourceId:$('screen-source').value,viewOnly:$('view-only').checked});if(incoming?.requestId!==request.requestId){await window.bridge.stopHost();return;}grantId=result.grantId;send({type:'respond',requestId:request.requestId,accepted:result.accepted,viewOnly:result.viewOnly});$('incoming-dialog').close();incoming=null;}catch(e){toast(e.message,true);send({type:'respond',requestId:request.requestId,accepted:false});}finally{$('approve').disabled=false;}
 });
-$('settings-form').addEventListener('submit',async event=>{event.preventDefault();if(sessionInfo){toast('请先结束远程会话',true);return;}try{settings=await window.bridge.saveSettings({serverUrl:$('server-url').value.trim(),deviceName:$('device-name').value.trim(),relayOnly:$('relay-only').checked});connectService();toast('设置已保存');tab('home');}catch(e){toast(e.message,true);}});
+$('settings-form').addEventListener('submit',async event=>{event.preventDefault();if(sessionInfo){toast('请先结束远程会话',true);return;}try{settings=await window.bridge.saveSettings({serverUrl:$('server-url').value.trim(),deviceName:$('device-name').value.trim(),relayOnly:$('relay-only').checked,codecPreference:$('share-codec').value});connectService();toast('设置已保存');tab('home');}catch(e){toast(e.message,true);}});
+$('share-codec').addEventListener('change',async()=>{if(sessionInfo)return;try{settings=await window.bridge.saveSettings({...settings,codecPreference:$('share-codec').value});toast('编码偏好已保存，下次共享时生效');}catch(e){$('share-codec').value=settings.codecPreference||'auto';toast(e.message,true);}});
 const video=$('remote-video');
 function point(event,clamp=false){return normalizedPoint(video.getBoundingClientRect(),video.videoWidth,video.videoHeight,event.clientX,event.clientY,clamp);}
 video.addEventListener('pointermove',event=>{const now=performance.now();if(now-lastMove<8)return;const p=point(event,dragging);if(p){transmit({type:'move',...p});lastMove=now;}});
@@ -213,19 +227,15 @@ async function updateStats(){
   const current=peer;
   try{
     const stats=await current.getStats();if(peer!==current||!sessionInfo)return;
-    let path='已连接',rtt=null,inbound,outbound;
-    for(const stat of stats.values()){
-      if(stat.type==='transport'&&stat.selectedCandidatePairId){const pair=stats.get(stat.selectedCandidatePairId),local=stats.get(pair?.localCandidateId),remote=stats.get(pair?.remoteCandidateId);path=local?.candidateType==='relay'||remote?.candidateType==='relay'?'TURN 中继':'直接连接';if(local?.protocol)path+=' · '+local.protocol.toUpperCase();if(Number.isFinite(pair?.currentRoundTripTime))rtt=Math.round(pair.currentRoundTripTime*1000);}
-      if(stat.type==='inbound-rtp'&&stat.kind==='video')inbound=stat;
-      if(stat.type==='outbound-rtp'&&stat.kind==='video')outbound=stat;
-    }
-    const metrics=inbound?videoMetrics(inbound,lastVideoStat):null;if(inbound)lastVideoStat=inbound;
-    if(inbound)$('stats').textContent=`${inbound.frameWidth||'—'} × ${inbound.frameHeight||'—'} · ${Math.round(inbound.framesPerSecond||0)} fps${metrics.bitrate!==null?' · '+metrics.bitrate.toFixed(1)+' Mbps':''}${rtt!==null?' · 往返 '+rtt+' ms':''}`;
-    else if(outbound)$('stats').textContent=`发送 ${outbound.frameWidth||'—'} × ${outbound.frameHeight||'—'} · ${Math.round(outbound.framesPerSecond||0)} fps${rtt!==null?' · 往返 '+rtt+' ms':''}`;
-    const details=[path];if(metrics?.bufferMs!==null&&metrics?.bufferMs!==undefined)details.push('视频缓冲 '+Math.round(metrics.bufferMs)+' ms');if(metrics?.decodeMs!==null&&metrics?.decodeMs!==undefined)details.push('解码 '+metrics.decodeMs.toFixed(1)+' ms');
-    if(outbound?.qualityLimitationReason==='cpu')details.push('发送端编码性能受限');if(outbound?.qualityLimitationReason==='bandwidth')details.push('发送端带宽受限');
+    const measured=readPerformanceStats(stats,performanceReference);performanceReference=measured.reference;const sample=measured.sample;if(!sample)return;
+    performanceView.update(sample,activeProfile,VIDEO_PROFILES[activeProfile].fps);
+    if(performancePeer&&channel?.readyState==='open'&&channel.bufferedAmount<8192)sendControl({type:'performance',version:1,sequence:++performanceSequence,sample});
+    const path=(sample.path==='relay'?'TURN 中继':sample.path==='direct'?'直接连接':'已连接')+(sample.transport?' · '+sample.transport.toUpperCase():'');
+    $('stats').textContent=`${sample.direction==='send'?'发送 ':''}${sample.width||'—'} × ${sample.height||'—'} · ${Math.round(sample.fps||0)} fps${sample.bitrateMbps!==null?' · '+sample.bitrateMbps.toFixed(1)+' Mbps':''}${sample.rttMs!==null?' · 往返 '+Math.round(sample.rttMs)+' ms':''}`;
+    const details=[path];if(sample.codec)details.push(sample.codec.replace('video/','').replace('H264','H.264'));if(sample.bufferMs!==null)details.push('视频缓冲 '+Math.round(sample.bufferMs)+' ms');if(sample.encodeMs!==null)details.push('编码 '+sample.encodeMs.toFixed(1)+' ms');if(sample.decodeMs!==null)details.push('解码 '+sample.decodeMs.toFixed(1)+' ms');
+    if(sample.limitation==='cpu')details.push('发送端编码性能受限');if(sample.limitation==='bandwidth')details.push('发送端带宽受限');
     $('session-description').textContent=details.join(' · ');$('stats').title='往返时间是网络 RTT，不是键鼠到画面的总延迟；静止画面可能减少发送帧数。';
-    if(Date.now()-lastDiagnostic>10000){lastDiagnostic=Date.now();const codec=stats.get((inbound||outbound)?.codecId);window.bridge.diagnostic?.({phase:'media-stats',message:JSON.stringify({role:sessionInfo.role,path,rttMs:rtt,width:(inbound||outbound)?.frameWidth,height:(inbound||outbound)?.frameHeight,fps:(inbound||outbound)?.framesPerSecond,codec:codec?.mimeType,qualityLimitation:outbound?.qualityLimitationReason,encodeMs:outbound?.framesEncoded?outbound.totalEncodeTime/outbound.framesEncoded*1000:null,...metrics})}).catch(()=>{});}
+    if(Date.now()-lastDiagnostic>10000){lastDiagnostic=Date.now();window.bridge.diagnostic?.({phase:'media-stats',message:JSON.stringify(sample)}).catch(()=>{});}
   }catch{}
 }
 window.bridge.onEvent(event=>{
@@ -236,5 +246,6 @@ window.bridge.onEvent(event=>{
   if(event.type==='input-error')toast('Windows 输入：'+event.message,true);
 });
 settings=await window.bridge.info();$('server-url').value=settings.serverUrl;$('device-name').value=settings.deviceName;$('relay-only').checked=settings.relayOnly;
+$('share-codec').value=isCodecPreference(settings.codecPreference)?settings.codecPreference:'auto';
 try{const screens=await window.bridge.screens();$('screen-source').replaceChildren(...screens.map(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.name;return o;}));if(!screens.length){const o=document.createElement('option');o.textContent='未找到可共享屏幕';$('screen-source').append(o);}}catch{$('screen-source').textContent='无法读取屏幕';}
 connectService();

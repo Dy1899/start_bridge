@@ -7,6 +7,7 @@ const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { ControlGate, validateServerUrl } = require('./control.cjs');
 const { allowCapturePermission } = require('./capture-permissions.cjs');
+const { buildPerformanceReport } = require('./performance-report.cjs');
 const electronMajor = Number.parseInt(process.versions.electron, 10);
 const root = path.join(__dirname, '..');
 const portableRoot = process.env.STARBRIDGE_DATA || (app.isPackaged ? path.join(path.dirname(process.execPath), 'data') : path.join(root, 'runtime'));
@@ -34,8 +35,8 @@ const configPath = path.join(portableRoot, 'settings.json');
 function emit(type, payload = {}) { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:event', { type, ...payload }); }
 function trusted(event) { if (event.sender !== mainWindow?.webContents || event.senderFrame?.url !== uiUrl) throw new Error('不允许的请求来源'); }
 function config() {
-  try { const c = JSON.parse(fs.readFileSync(configPath,'utf8')); return { serverUrl: validateServerUrl(c.serverUrl), deviceName: String(c.deviceName || os.hostname()).slice(0,40), relayOnly: c.relayOnly === true }; }
-  catch { return { serverUrl: 'ws://127.0.0.1:8787/signal', deviceName: os.hostname(), relayOnly: false }; }
+  try { const c = JSON.parse(fs.readFileSync(configPath,'utf8')); return { serverUrl: validateServerUrl(c.serverUrl), deviceName: String(c.deviceName || os.hostname()).slice(0,40), relayOnly: c.relayOnly === true, codecPreference:['auto','h264','vp8'].includes(c.codecPreference)?c.codecPreference:'auto' }; }
+  catch { return { serverUrl: 'ws://127.0.0.1:8787/signal', deviceName: os.hostname(), relayOnly: false, codecPreference:'auto' }; }
 }
 function nativeWrite(command) { if (helper?.stdin.writable) helper.stdin.write(JSON.stringify(command) + '\n'); }
 function release() { nativeWrite({ type: 'release' }); }
@@ -85,7 +86,7 @@ function hostIndicator(viewOnly) {
 ipcMain.handle('app:info', event => { trusted(event); return { version:app.getVersion(), platform:process.platform, ...config() }; });
 ipcMain.handle('settings:save', (event,value) => {
   trusted(event); if (gate.active) throw new Error('请先结束当前远程会话');
-  const settings = { serverUrl:validateServerUrl(String(value.serverUrl||'')), deviceName:String(value.deviceName||os.hostname()).replace(/[\x00-\x1f]/g,'').slice(0,40), relayOnly:value.relayOnly===true };
+  const settings = { serverUrl:validateServerUrl(String(value.serverUrl||'')), deviceName:String(value.deviceName||os.hostname()).replace(/[\x00-\x1f]/g,'').slice(0,40), relayOnly:value.relayOnly===true, codecPreference:['auto','h264','vp8'].includes(value.codecPreference)?value.codecPreference:'auto' };
   fs.writeFileSync(configPath,JSON.stringify(settings,null,2)); return settings;
 });
 ipcMain.handle('screen:list', async event => { trusted(event); const sources = await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:280,height:160}}); return sources.map(s=>({id:s.id,name:s.name,displayId:s.display_id,thumbnail:s.thumbnail.toDataURL()})); });
@@ -126,6 +127,14 @@ ipcMain.handle('host:started', (event,request) => {
 });
 ipcMain.handle('diagnostic:record',(event,entry)=>{
   trusted(event);diagnostic(entry?.phase||'renderer',entry||{});return true;
+});
+ipcMain.handle('performance:save',(event,value)=>{
+  trusted(event);
+  const report=buildPerformanceReport(value,{version:app.getVersion()});
+  const reportRoot=path.join(portableRoot,'reports');fs.mkdirSync(reportRoot,{recursive:true});
+  const name='performance-'+new Date().toISOString().replace(/[:.]/g,'-')+'-'+randomUUID().slice(0,8)+'.json';
+  fs.writeFileSync(path.join(reportRoot,name),JSON.stringify(report,null,2),{encoding:'utf8',flag:'wx'});
+  return {name};
 });
 ipcMain.handle('host:stop',event=>{trusted(event);stopHost();return true;});
 ipcMain.on('input:send',(event,sessionId,command)=>{trusted(event);if(gate.permits(sessionId,command))nativeWrite(command);});
