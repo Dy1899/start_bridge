@@ -8,10 +8,17 @@ test('negotiated video applies the capture and encoder budget together; failures
   const sender={track:{kind:'video',applyConstraints:async c=>resized=c,getSettings:()=>({width:1920,height:1080,frameRate:60})},getParameters:()=>({transactionId:'preserved',encodings:[{rid:'main'}]}),setParameters:async p=>applied=p};
   const settings=await applyVideoProfile(sender,'balanced');
   assert.equal(settings.frameRate,60);assert.equal(resized.frameRate.max,60);assert.equal(applied.encodings[0].maxBitrate,16000000);assert.equal(applied.encodings[0].rid,'main');assert.equal(applied.transactionId,'preserved');assert.equal(applied.degradationPreference,'maintain-framerate');assert.equal(sender.track.contentHint,'motion');
-  await applyVideoProfile(sender,'detail');assert.equal(resized.width.max,2560);assert.equal(applied.degradationPreference,'maintain-resolution');assert.equal(sender.track.contentHint,'detail');
+  await applyVideoProfile(sender,'detail');assert.equal(resized.width.max,3840);assert.equal(applied.degradationPreference,'maintain-resolution');assert.equal(sender.track.contentHint,'text');
   sender.setParameters=async()=>{throw Error('Encoder rejected settings');};await assert.rejects(applyVideoProfile(sender,'smooth'),/Encoder rejected/);
   sender.getParameters=()=>({encodings:[]});await assert.rejects(applyVideoProfile(sender,'balanced'),/协商尚未完成/);
   assert.throws(()=>videoConstraints('shell'),/未知画质/);
+});
+test('text capture preserves the available screen size without requesting invented pixels',async()=>{
+  let capture,encoder;
+  const sender={track:{kind:'video',getCapabilities:()=>({width:{max:1920},height:{max:1080}}),applyConstraints:async c=>capture=c,getSettings:()=>({width:1920,height:1080})},getParameters:()=>({encodings:[{}]}),setParameters:async p=>encoder=p};
+  const actual=await applyVideoProfile(sender,'detail');assert.equal(capture.width.ideal,1920);assert.equal(capture.height.ideal,1080);assert.equal(actual.width,1920);assert.equal(encoder.encodings[0].scaleResolutionDownBy,1);assert.equal(encoder.encodings[0].maxBitrate,24000000);
+  assert.equal(videoConstraints('detail',{width:{max:2560},height:{max:1600}}).height.max,1600);
+  assert.equal(videoConstraints('detail',{width:{max:7680},height:{max:4320}}).width.max,3840);
 });
 test('unsupported low-delay receivers fall back without breaking playback',()=>{
   assert.equal(preferLowDelay({}),false);const receiver={jitterBufferTarget:null};assert.equal(preferLowDelay(receiver),true);assert.equal(receiver.jitterBufferTarget,20);

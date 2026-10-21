@@ -5,6 +5,7 @@ import {PointerOrder,clickPosition} from './pointer-order.mjs';
 import {CODEC_PREFERENCES,isCodecPreference,applyCodecPreference} from './codec-preference.mjs';
 import {readPerformanceStats} from './performance.mjs';
 import {PerformanceView} from './performance-view.mjs';
+import {RemoteView} from './remote-view.mjs';
 const $=id=>document.getElementById(id),show=(id,on=true)=>$(id).classList.toggle('hidden',!on);
 window.__uiErrors=[];
 window.addEventListener('error',e=>window.__uiErrors.push(e.message));
@@ -14,6 +15,7 @@ let lastMove=0,dragging=false,localFailure=null,pointerChannel,moveSequence=0,po
 let activeProfile=DEFAULT_PROFILE,qualityBusy=false,remoteMediaSupport=false,lastDiagnostic=0,qualityRequestTimer;
 let performanceReference=null,performanceSequence=0,performancePeer=false;
 const performanceView=new PerformanceView(document,value=>window.bridge.savePerformance(value),toast);
+const remoteView=new RemoteView(document);
 for(const id of ['share-quality','session-quality'])for(const [value,p] of Object.entries(VIDEO_PROFILES)){const option=document.createElement('option');option.value=value;option.textContent=p.label;$(id).append(option);$(id).value=DEFAULT_PROFILE;}
 for(const [value,label] of Object.entries(CODEC_PREFERENCES)){const option=document.createElement('option');option.value=value;option.textContent=label;$('share-codec').append(option);}
 const heldKeys=new Set();
@@ -48,13 +50,13 @@ async function handle(m){
     incoming=null;grantId=null;if($('incoming-dialog').open)$('incoming-dialog').close();await window.bridge.stopHost();$('connect-button').disabled=!registered;show('cancel-request',false);$('connect-tip').textContent=m.reason;return;
   }
   if(m.type==='session.ready'){
-    localFailure=null;show('error-panel',false);sessionInfo=m;startedAt=Date.now();tab('home');show('idle-grid',false);show('session-panel');show('cancel-request',false);
+    localFailure=null;show('error-panel',false);sessionInfo=m;startedAt=Date.now();tab('home');show('idle-grid',false);show('session-panel');show('cancel-request',false);document.body.classList.toggle('controlling',m.role==='controller');remoteView.reset();
     $('peer-name').textContent=m.peerName;$('connection-mode').textContent=m.viewOnly?'仅观看':'可控制';$('connect-button').disabled=true;
     show('remote-stage',m.role==='controller');show('host-message',m.role==='host');show('start-share',m.role==='host');$('host-message').querySelector('h3').textContent='你正在提供远程协助';show('keyboard-option',m.role==='controller'&&!m.viewOnly);
     activeProfile=$('share-quality').value;remoteMediaSupport=false;lastDiagnostic=0;pointerOrder=new PointerOrder();moveSequence=0;lastMove=0;
     performanceReference=null;performanceSequence=0;performancePeer=false;performanceView.start(m.role,activeProfile,$('share-codec').value);
     $('session-quality').value=activeProfile;$('session-quality').disabled=m.role==='controller';show('fullscreen',m.role==='controller');
-    $('quality-status').textContent=m.role==='host'?'目标画质，实际以连接状态为准':'画质切换需要对方使用新版；连接后自动检测';
+    $('quality-status').textContent=m.role==='host'?'目标不超过屏幕原始尺寸；实际分辨率见状态栏':'画质切换需要对方使用新版；连接后自动检测';show('display-toolbar',m.role==='controller');
     if(m.role==='controller'){await createPeer();}else if(!grantId){throw new Error('本机授权已失效，请重新连接');}
     statsTimer=setInterval(updateStats,1000);return;
   }
@@ -110,7 +112,7 @@ function attachChannel(dc){
         performancePeer=command.performance===1;
         activeProfile=command.profile;
         clearTimeout(qualityRequestTimer);remoteMediaSupport=true;$('session-quality').disabled=false;$('session-quality').value=command.profile;
-        $('quality-status').textContent=command.error||'可随时切换画质；显示的分辨率和帧率为实际接收值';
+        $('quality-status').textContent=command.error||(activeProfile==='detail'?'保留细字，最高 4K / 30 帧；不超过对方屏幕原始尺寸':'可随时切换画质；显示的分辨率和帧率为实际接收值');
         if(command.pointer===true&&!pointerChannel){pointerChannel=peer.createDataChannel('pointer',{ordered:false,maxRetransmits:0});pointerChannel.onclose=()=>{pointerChannel=null;};}
       }
     }catch{}
@@ -129,7 +131,7 @@ async function changeHostQuality(id){
     const applied=await applyVideoProfile(sender,id);
     if(peer!==current||sessionInfo?.role!=='host')return;
     activeProfile=id;$('share-quality').value=id;$('session-quality').value=id;
-    $('quality-status').textContent='目标 '+VIDEO_PROFILES[id].label+'，实际效果取决于电脑性能和网络';
+    $('quality-status').textContent='当前采集 '+applied.width+' × '+applied.height+'；目标不超过屏幕原始尺寸';
     window.bridge.diagnostic?.({phase:'video-profile',message:JSON.stringify({profile:id,width:applied.width,height:applied.height,frameRate:applied.frameRate,maxBitrate:VIDEO_PROFILES[id].bitrate})}).catch(()=>{});
     sendMediaState();
   }catch(error){if(peer===current){toast('画质设置未完成：'+error.message,true);sendMediaState('画质设置未完成，请在被控端查看提示');window.bridge.diagnostic?.({phase:'video-profile-failed',name:error.name,message:error.message}).catch(()=>{});}}
@@ -137,6 +139,7 @@ async function changeHostQuality(id){
 }
 $('session-quality').addEventListener('change',()=>{
   const id=$('session-quality').value;
+  if(sessionInfo?.role==='controller'&&id==='detail')remoteView.setMode('native');
   if(sessionInfo?.role==='host'){changeHostQuality(id);return;}
   if(!remoteMediaSupport||channel?.readyState!=='open')return;
   $('session-quality').disabled=true;sendControl({type:'media-quality',profile:id});
@@ -195,7 +198,7 @@ function transmit(command){
 function releaseInputs(){heldKeys.clear();dragging=false;if(channel?.readyState==='open'&&sessionInfo?.role==='controller')channel.send(JSON.stringify({type:'release'}));}
 async function endSession(notify,reasonCode='user-stop'){
   if(stopping)return;stopping=true;
-  try{if(notify)send({type:'disconnect',reasonCode});releaseInputs();await window.bridge.stopHost();sessionInfo=null;grantId=null;incoming=null;clearInterval(statsTimer);clearTimeout(connectionTimer);clearTimeout(qualityRequestTimer);performanceView.end();if(channel){channel.onclose=null;}if(pointerChannel){pointerChannel.onclose=null;pointerChannel.close();}pointerChannel=null;if(peer){peer.onconnectionstatechange=null;peer.close();}peer=null;if(channel)channel.close();channel=null;if(stream){for(const t of stream.getTracks()){t.onended=null;t.stop();}}stream=null;$('remote-video').srcObject=null;show('stage-placeholder');show('session-panel',false);show('idle-grid');$('connect-button').disabled=!registered;$('rotate').disabled=!registered;$('start-share').disabled=false;if($('incoming-dialog').open)$('incoming-dialog').close();performanceReference=null;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
+  try{if(notify)send({type:'disconnect',reasonCode});releaseInputs();await window.bridge.stopHost();sessionInfo=null;document.body.classList.remove('controlling');remoteView.reset();grantId=null;incoming=null;clearInterval(statsTimer);clearTimeout(connectionTimer);clearTimeout(qualityRequestTimer);performanceView.end();if(channel){channel.onclose=null;}if(pointerChannel){pointerChannel.onclose=null;pointerChannel.close();}pointerChannel=null;if(peer){peer.onconnectionstatechange=null;peer.close();}peer=null;if(channel)channel.close();channel=null;if(stream){for(const t of stream.getTracks()){t.onended=null;t.stop();}}stream=null;$('remote-video').srcObject=null;show('stage-placeholder');show('session-panel',false);show('idle-grid');$('connect-button').disabled=!registered;$('rotate').disabled=!registered;$('start-share').disabled=false;if($('incoming-dialog').open)$('incoming-dialog').close();performanceReference=null;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
   finally{stopping=false;}
 }
 $('connect-form').addEventListener('submit',event=>{event.preventDefault();if(!registered||sessionInfo)return;const peerId=$('target-id').value.replace(/\s/g,''),secret=$('target-secret').value.trim();if(!/^\d{9}$/.test(peerId)||!/^\d{8}$/.test(secret)){toast('请输入 9 位识别码和 8 位访问码',true);return;}send({type:'connect',peerId,secret});$('target-secret').value='';});
@@ -214,13 +217,13 @@ $('share-codec').addEventListener('change',async()=>{if(sessionInfo)return;try{s
 const video=$('remote-video');
 function point(event,clamp=false){return normalizedPoint(video.getBoundingClientRect(),video.videoWidth,video.videoHeight,event.clientX,event.clientY,clamp);}
 video.addEventListener('pointermove',event=>{const now=performance.now();if(now-lastMove<8)return;const p=point(event,dragging);if(p){transmit({type:'move',...p});lastMove=now;}});
-video.addEventListener('pointerdown',event=>{const p=point(event);if(!p)return;event.preventDefault();video.focus();video.setPointerCapture(event.pointerId);dragging=true;transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'down',...p});});
+video.addEventListener('pointerdown',event=>{const p=point(event);if(!p)return;event.preventDefault();video.focus({preventScroll:true});video.setPointerCapture(event.pointerId);dragging=true;transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'down',...p});});
 video.addEventListener('pointerup',event=>{const p=point(event,true);if(p)transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'up',...(p||{})});dragging=false;});
 video.addEventListener('pointercancel',releaseInputs);video.addEventListener('contextmenu',event=>event.preventDefault());
 video.addEventListener('wheel',event=>{if(!point(event))return;event.preventDefault();transmit({type:'wheel',delta:event.deltaY<0?120:-120});},{passive:false});
 video.addEventListener('keydown',event=>{if(!$('capture-keys').checked)return;event.preventDefault();if(!event.repeat&&!heldKeys.has(event.code)){heldKeys.add(event.code);transmit({type:'key',code:event.code,state:'down'});}});
 video.addEventListener('keyup',event=>{event.preventDefault();heldKeys.delete(event.code);transmit({type:'key',code:event.code,state:'up'});});
-video.addEventListener('blur',releaseInputs);window.addEventListener('blur',releaseInputs);$('capture-keys').addEventListener('change',releaseInputs);
+video.addEventListener('blur',releaseInputs);window.addEventListener('blur',releaseInputs);$('capture-keys').addEventListener('change',releaseInputs);$('view-mode').addEventListener('change',releaseInputs);
 async function updateStats(){
   if(!sessionInfo)return;const seconds=Math.floor((Date.now()-startedAt)/1000);$('duration').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
   if(!peer||peer.connectionState!=='connected')return;

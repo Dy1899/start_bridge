@@ -1,19 +1,21 @@
 export const VIDEO_PROFILES = Object.freeze({
   smooth: Object.freeze({label:'流畅优先 · 720p / 60',width:1280,height:720,fps:60,bitrate:8000000,hint:'motion',degradation:'maintain-framerate'}),
   balanced: Object.freeze({label:'高清流畅 · 1080p / 60',width:1920,height:1080,fps:60,bitrate:16000000,hint:'motion',degradation:'maintain-framerate'}),
-  detail: Object.freeze({label:'文字清晰 · 1440p / 30',width:2560,height:1440,fps:30,bitrate:18000000,hint:'detail',degradation:'maintain-resolution'})
+  detail: Object.freeze({label:'文字清晰 · 原始分辨率 / 30',width:3840,height:2160,fps:30,bitrate:24000000,hint:'text',degradation:'maintain-resolution'})
 });
 export const DEFAULT_PROFILE = 'balanced';
 export function isVideoProfile(id) { return Object.hasOwn(VIDEO_PROFILES,id); }
-export function videoConstraints(id) {
+export function videoConstraints(id,capabilities={}) {
   if(!isVideoProfile(id))throw new Error('未知画质档位');
   const p=VIDEO_PROFILES[id];
-  return {width:{ideal:p.width,max:p.width},height:{ideal:p.height,max:p.height},frameRate:{ideal:p.fps,max:p.fps}};
+  const limit=(value,range)=>Number.isFinite(range?.max)&&range.max>0?Math.min(value,range.max):value;
+  const width=limit(p.width,capabilities.width),height=limit(p.height,capabilities.height);
+  return {width:{ideal:width,max:width},height:{ideal:height,max:height},frameRate:{ideal:p.fps,max:p.fps}};
 }
 // Call after SDP negotiation: before it, browsers may return no sender encodings.
 export async function applyVideoProfile(sender,id) {
   if(!sender?.track||sender.track.kind!=='video')throw new Error('没有可用的视频发送轨道');
-  const constraints=videoConstraints(id),profile=VIDEO_PROFILES[id];
+  const constraints=videoConstraints(id,sender.track.getCapabilities?.()),profile=VIDEO_PROFILES[id];
   await sender.track.applyConstraints(constraints);
   sender.track.contentHint=profile.hint;
   const params=sender.getParameters();
