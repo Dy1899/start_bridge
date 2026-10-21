@@ -1,6 +1,6 @@
 const requestedCodec=new URL(location.href).searchParams.get('codec')||'auto';
 const screen1080=new URL(location.href).searchParams.get('screen')==='1080';
-const result={ok:false,version:'0.1.6',requestedCodec,sourceWidth:screen1080?1920:2560,realDesktopCaptured:false,nativeInputInjected:false};
+const result={ok:false,version:'0.1.7',requestedCodec,sourceWidth:screen1080?1920:2560,realDesktopCaptured:false,nativeInputInjected:false};
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(condition,description,ms=25000){const start=Date.now();while(Date.now()-start<ms){if(condition())return;await pause(100);}throw Error('Timed out: '+description);}
 const frames=['host','controller'].map(id=>document.getElementById(id));
@@ -50,16 +50,40 @@ try{
     result.display.push({mode,status:c('view-status').textContent,videoWidth:vr.width,dpr:controller.devicePixelRatio,scrollLeft:stage.scrollLeft,scrollTop:stage.scrollTop,clickAccurate:true});
   }
   result.displayZoom=true;
+  await until(()=>!c('game-mouse').disabled,'native game capability');
+  // Pointer-lock activation is simulated only inside this fixture. Network
+  // messages and application handlers are real; no Windows input is injected.
+  const gameVideo=c('remote-video'),originalLock=gameVideo.requestPointerLock,originalExit=controller.document.exitPointerLock;
+  let fakeLock=null;Object.defineProperty(controller.document,'pointerLockElement',{configurable:true,get:()=>fakeLock});
+  gameVideo.requestPointerLock=async()=>{fakeLock=gameVideo;controller.document.dispatchEvent(new controller.Event('pointerlockchange'));};
+  controller.document.exitPointerLock=()=>{fakeLock=null;controller.document.dispatchEvent(new controller.Event('pointerlockchange'));};
+  const beforeGame=host.__inputs.length;c('game-mouse').click();await until(()=>host.__inputs.slice(beforeGame).some(c=>c.type==='input-mode'&&c.mode==='relative'),'relative mode');
+  const movement=(x,y)=>{const e=new controller.MouseEvent('mousemove');Object.defineProperties(e,{movementX:{value:x},movementY:{value:y}});gameVideo.dispatchEvent(e);};
+  movement(10,-5);movement(2,3);gameVideo.dispatchEvent(new controller.MouseEvent('mousedown',{button:0}));gameVideo.dispatchEvent(new controller.MouseEvent('mouseup',{button:0}));
+  gameVideo.dispatchEvent(new controller.KeyboardEvent('keydown',{code:'KeyW',bubbles:true}));await until(()=>host.__inputs.slice(beforeGame).some(c=>c.type==='key'&&c.code==='KeyW'),'game key');
+  const gameRows=host.__inputs.slice(beforeGame),relative=gameRows.find(c=>c.type==='relative'),button=gameRows.findIndex(c=>c.type==='button'&&c.state==='down');
+  if(!relative||relative.dx!==12||relative.dy!==-2||gameRows[button-1]?.type!=='relative'||gameRows.some(c=>c.type==='move'))throw Error('Relative movement or click ordering failed');
+  gameVideo.dispatchEvent(new controller.KeyboardEvent('keydown',{code:'Escape',key:'Escape',bubbles:true}));await until(()=>host.__inputs.at(-1)?.type==='input-mode'&&host.__inputs.at(-1)?.mode==='absolute','Escape releases game input');
+  if(fakeLock||!host.__inputs.slice(beforeGame).some(c=>c.type==='release'))throw Error('Escape did not release input');
+  const afterGame=host.__inputs.length;fast.send(JSON.stringify({type:'move',seq:1,x:0.99,y:0.99}));fast.send(JSON.stringify({type:'relative',dx:999,dy:999}));await pause(120);if(host.__inputs.length!==afterGame)throw Error('Old hover or unordered relative input crossed the mode barrier');
+  c('game-mouse').click();await until(()=>fakeLock,'reenter game mouse');controller.dispatchEvent(new controller.Event('blur'));await until(()=>!fakeLock,'blur unlocks game mouse');
+  c('game-mouse').click();await until(()=>fakeLock,'reenter before disabling input');c('capture-keys').checked=false;c('capture-keys').dispatchEvent(new controller.Event('change'));await until(()=>!fakeLock&&c('game-mouse').disabled,'disabling keyboard releases game input');c('capture-keys').checked=true;c('capture-keys').dispatchEvent(new controller.Event('change'));await until(()=>!c('game-mouse').disabled,'reenabling desktop input');
+  host.__bridgeEvent({type:'input-ready',relativeMouse:false});await until(()=>c('game-mouse').disabled,'old helper disables game mouse');host.__bridgeEvent({type:'input-ready',relativeMouse:true});await until(()=>!c('game-mouse').disabled,'new helper restores game mouse');
+  result.gameMouseMessaging=true;result.pointerLockSimulated=true;result.escapeAndBlurRelease=true;result.disableInputRelease=true;result.oldHelperFallback=true;result.codecPaths={encoder:c('perf-encode-path').textContent,decoder:c('perf-decode-path').textContent};
   if(host.__uiErrors.length||controller.__uiErrors.length)throw Error('Renderer errors after zoom: '+[...host.__uiErrors,...controller.__uiErrors].join('; '));
   c('performance-panel').open=true;c('save-performance').click();await until(()=>controller.__reports.length===1,'save live performance report');
   const exported=controller.__reports[0];if(!exported.samples.some(row=>row.local&&row.remote))throw Error('Export is missing one end of the connection');if(exported.samples.length>60||JSON.stringify(exported).includes('serverUrl'))throw Error('Unexpected report contents');result.performanceExport=true;
+  result.frameTimingAvailable=exported.samples.some(row=>row.local?.frameIntervalMs!==null&&row.local?.frameJitterMs!==null);
   if(new URL(location.href).searchParams.get('hold')==='1'){
     c('performance-panel').open=false;c('view-mode').value='150';c('view-mode').dispatchEvent(new controller.Event('change'));frames[0].style.display='none';Object.assign(frames[1].style,{position:'fixed',inset:'0',width:'100vw',height:'100dvh',border:'0'});await pause(400);result.heldForVisualReview=true;
   }else{
+    c('game-mouse').click();await until(()=>fakeLock,'game mode before disconnect');
     c('disconnect').click();await until(()=>h('session-panel').classList.contains('hidden'),'disconnect');result.disconnect=true;
+    if(fakeLock)throw Error('Disconnect left pointer lock active');result.disconnectReleasesGame=true;
     if(controller.document.body.classList.contains('controlling'))throw Error('Viewer layout not reset');
     if(c('save-last-performance').classList.contains('hidden'))throw Error('Previous-session report not available');c('save-last-performance').click();await until(()=>controller.__reports.length===2,'save previous report');result.previousSessionExport=true;
   }
+  gameVideo.requestPointerLock=originalLock;controller.document.exitPointerLock=originalExit;delete controller.document.pointerLockElement;
   if(c('remote-video').readyState>=2){const video=c('remote-video'),stage=c('remote-stage'),canvas=controller.document.createElement('canvas');canvas.width=canvas.height=2;const ctx=canvas.getContext('2d');ctx.drawImage(video,0,0,2,2);result.visual={readyState:video.readyState,currentTime:video.currentTime,pixel:[...ctx.getImageData(0,0,1,1).data],elements:['remote-stage','remote-surface','remote-video'].map(id=>{const e=c(id),r=e.getBoundingClientRect();return{id,rect:{x:r.x,y:r.y,width:r.width,height:r.height},client:[e.clientWidth,e.clientHeight],scroll:[e.scrollLeft,e.scrollTop],style:e.getAttribute('style')};})};}
   result.ok=true;
 }catch(error){result.error=error.stack;result.snapshots=[host,controller].filter(Boolean).map(snapshot);}

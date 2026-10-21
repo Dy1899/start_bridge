@@ -4,6 +4,8 @@ const codes = new Set(['Escape','Tab','CapsLock','Backspace','Enter','Space','Sh
 function validCommand(c) {
   if (!c || typeof c !== 'object' || Array.isArray(c)) return false;
   if (c.type === 'move') return Number.isFinite(c.x) && c.x >= 0 && c.x <= 1 && Number.isFinite(c.y) && c.y >= 0 && c.y <= 1;
+  if (c.type === 'relative') return Number.isInteger(c.dx) && Math.abs(c.dx) <= 2048 && Number.isInteger(c.dy) && Math.abs(c.dy) <= 2048 && (c.dx !== 0 || c.dy !== 0);
+  if (c.type === 'input-mode') return ['relative','absolute'].includes(c.mode);
   if (c.type === 'button') return ['left','right','middle'].includes(c.button) && ['down','up'].includes(c.state);
   if (c.type === 'wheel') return Number.isInteger(c.delta) && c.delta >= -1200 && c.delta <= 1200 && c.delta !== 0;
   if (c.type === 'key') return typeof c.code === 'string' && (codes.has(c.code) || /^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-2])|Numpad[0-9])$/.test(c.code)) && ['down','up'].includes(c.state);
@@ -30,7 +32,14 @@ class ControlGate {
     if (!p || this.active || p.requestId !== requestId || p.grantId !== grantId || p.expires < this.now() || typeof sessionId !== 'string' || sessionId.length > 80) throw new Error('本机授权已失效');
     this.pending = null; this.active = { ...p, sessionId }; return this.active;
   }
-  permits(sessionId, c) { return !!this.active && !this.active.viewOnly && sessionId === this.active.sessionId && validCommand(c); }
+  permits(sessionId, c) {
+    if(!this.active||this.active.viewOnly||sessionId!==this.active.sessionId||!validCommand(c))return false;
+    if(c.type==='relative'&&this.active.inputMode!=='relative')return false;
+    if(c.type==='move'&&this.active.inputMode==='relative')return false;
+    if(c.type==='input-mode')this.active.inputMode=c.mode;
+    if(c.type==='release')this.active.inputMode='absolute';
+    return true;
+  }
   clear() { this.pending = null; this.active = null; }
 }
 module.exports = { validCommand, validateServerUrl, ControlGate };

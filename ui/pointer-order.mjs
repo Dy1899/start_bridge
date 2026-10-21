@@ -2,6 +2,7 @@
 // position attached to a later reliable click or drag.
 export class PointerOrder {
   constructor(){this.last=0;this.sequenced=false;}
+  barrier(sequence){if(!Number.isSafeInteger(sequence)||sequence<=this.last)return false;this.last=sequence;this.sequenced=true;return true;}
   accept(command,fast=false){
     if(command?.type!=='move')return false;
     if(!Number.isFinite(command.x)||command.x<0||command.x>1||!Number.isFinite(command.y)||command.y<0||command.y>1)return false;

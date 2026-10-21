@@ -1,4 +1,4 @@
-export const SAMPLE_LIMITS=Object.freeze({width:16384,height:16384,fps:500,captureFps:500,bitrateMbps:10000,rttMs:60000,encodeMs:60000,decodeMs:60000,bufferMs:60000,sendQueueMs:60000,packetLossPct:100,droppedFrames:1000000,availableMbps:10000});
+export const SAMPLE_LIMITS=Object.freeze({width:16384,height:16384,fps:500,captureFps:500,bitrateMbps:10000,rttMs:60000,encodeMs:60000,decodeMs:60000,bufferMs:60000,sendQueueMs:60000,frameIntervalMs:60000,frameJitterMs:60000,packetLossPct:100,droppedFrames:1000000,availableMbps:10000});
 const number=(value,max)=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=max?Math.round(value*1000)/1000:null;
 const implementation=value=>typeof value==='string'&&/^[\x20-\x7e]{1,100}$/.test(value)?value:null;
 export function normalizePerformanceSample(value){
@@ -21,6 +21,9 @@ export function readPerformanceStats(stats,previous){
   const delta=key=>elapsed>0&&Number.isFinite(video[key])&&Number.isFinite(old?.[key])&&video[key]>=old[key]?video[key]-old[key]:null;
   const perUnit=(total,count)=>{const t=delta(total),n=delta(count);return t!==null&&n>0?t/n*1000:null;};
   const bytes=delta(receiving?'bytesReceived':'bytesSent'),frames=delta(receiving?'framesDecoded':'framesEncoded');
+  const intervals=receiving?delta('totalInterFrameDelay'):null,squared=receiving?delta('totalSquaredInterFrameDelay'):null;
+  const frameIntervalMs=intervals!==null&&frames>0?intervals/frames*1000:null;
+  const frameJitterMs=frameIntervalMs!==null&&squared!==null?Math.sqrt(Math.max(0,squared/frames-(intervals/frames)**2))*1000:null;
   const lost=delta('packetsLost'),packets=delta('packetsReceived');
   const transport=stats.get(video.transportId)||all.find(s=>s.type==='transport'&&s.selectedCandidatePairId),pair=stats.get(transport?.selectedCandidatePairId);
   const local=stats.get(pair?.localCandidateId),remote=stats.get(pair?.remoteCandidateId),source=stats.get(video.mediaSourceId),codec=stats.get(video.codecId);
@@ -32,6 +35,7 @@ export function readPerformanceStats(stats,previous){
     encodeMs:receiving?null:perUnit('totalEncodeTime','framesEncoded'),decodeMs:receiving?perUnit('totalDecodeTime','framesDecoded'):null,
     bufferMs:receiving?perUnit('jitterBufferDelay','jitterBufferEmittedCount'):null,
     sendQueueMs:receiving?null:perUnit('totalPacketSendDelay','packetsSent'),
+    frameIntervalMs,frameJitterMs,
     packetLossPct:receiving&&lost!==null&&packets!==null&&lost+packets>0?lost/(lost+packets)*100:null,
     droppedFrames:receiving?delta('framesDropped'):null,
     availableMbps:Number.isFinite(pair?.availableOutgoingBitrate)?pair.availableOutgoingBitrate/1000000:null,

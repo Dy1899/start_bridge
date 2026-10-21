@@ -1,4 +1,5 @@
 import {normalizePerformanceSample,performanceAdvice} from './performance.mjs';
+import {codecPath} from './codec-status.mjs';
 const metric=(value,unit,digits=1)=>Number.isFinite(value)?value.toFixed(digits)+' '+unit:'未提供';
 const codec=value=>value?.replace(/^video\//,'').replace('H264','H.264')||'未提供';
 const efficient=value=>value===true?'是':value===false?'否':'未提供';
@@ -32,6 +33,9 @@ export class PerformanceView{
     this.text('perf-encoder',sender?.implementation||'浏览器未提供');
     this.text('perf-decoder',receiver?.implementation||'浏览器未提供');
     this.text('perf-efficient','编码 '+efficient(sender?.powerEfficient)+' / 解码 '+efficient(receiver?.powerEfficient));
+    this.text('perf-encode-path',codecPath(sender).label);this.text('perf-decode-path',codecPath(receiver).label);
+    this.text('perf-frame-interval',metric(receiver?.frameIntervalMs,'ms / 帧'));
+    this.text('perf-frame-jitter',metric(receiver?.frameJitterMs,'ms'));
     this.text('performance-advice',performanceAdvice(sender,receiver,this.targetFps||60));
     this.text('performance-peer-status',remote?'已收到对方性能统计':'尚未收到对方的当前统计；两端升级后可查看完整链路。');
     this.document.getElementById('save-performance').disabled=!this.history.length;

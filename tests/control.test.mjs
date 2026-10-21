@@ -9,3 +9,12 @@ test('public unencrypted signals and arbitrary input actions are refused',()=>{
 test('letterboxing and negative display coordinates do not distort normalized pointer mapping',()=>{
   const rect={left:10,top:20,width:1000,height:1000};assert.equal(normalizedPoint(rect,1920,1080,510,50),null);assert.deepEqual(normalizedPoint(rect,1920,1080,510,520),{x:0.5,y:0.5});assert.deepEqual(normalizedPoint(rect,1920,1080,0,1000,true),{x:0,y:1});
 });
+test('relative input needs control approval and an explicit mode; release restores desktop input',()=>{
+  const gate=new ControlGate(),relative={type:'relative',dx:10,dy:-2},absolute={type:'move',x:0.5,y:0.5};
+  assert.equal(gate.permits('s',relative),false);const grant=gate.approve('r','screen:1',{},false);gate.activate('r','s',grant);
+  assert.equal(gate.permits('s',relative),false);assert.equal(gate.permits('wrong',{type:'input-mode',mode:'relative'}),false);
+  assert.equal(gate.permits('s',{type:'input-mode',mode:'relative'}),true);assert.equal(gate.permits('s',relative),true);assert.equal(gate.permits('s',absolute),false);
+  assert.equal(gate.permits('s',{type:'release'}),true);assert.equal(gate.permits('s',relative),false);assert.equal(gate.permits('s',absolute),true);
+  for(const c of [{type:'relative',dx:0,dy:0},{type:'relative',dx:0.5,dy:2},{type:'relative',dx:2049,dy:0},{type:'relative',dx:Infinity,dy:0},{type:'input-mode',mode:'shell'}])assert.equal(validCommand(c),false);
+  gate.clear();const view=gate.approve('view','screen:1',{},true);gate.activate('view','v',view);assert.equal(gate.permits('v',{type:'input-mode',mode:'relative'}),false);assert.equal(gate.permits('v',relative),false);
+});

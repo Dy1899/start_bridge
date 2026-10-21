@@ -18,6 +18,8 @@ class InputAgent {
     static readonly HashSet<int> Keys = new HashSet<int>();
     static readonly HashSet<string> Buttons = new HashSet<string>();
     static bool DryRun;
+    static bool RelativeMode;
+    static int RelativeEvents,RelativeX,RelativeY;
     static int X,Y,W,H;
     static DateTime LastPing=DateTime.UtcNow;
     static Dictionary<string,int> CodeMap = new Dictionary<string,int> {
@@ -66,10 +68,23 @@ class InputAgent {
     static void Process(Dictionary<string,object> m) {
         string type=Convert.ToString(m["type"],CultureInfo.InvariantCulture);
         if(type=="ping"){LastPing=DateTime.UtcNow;return;}
-        if(type=="release"){ReleaseAll();return;}
+        if(type=="release"){ReleaseAll();RelativeMode=false;return;}
         if(type=="bounds") { X=(int)Number(m,"x",-100000,100000);Y=(int)Number(m,"y",-100000,100000);W=(int)Number(m,"width",1,32768);H=(int)Number(m,"height",1,32768);return; }
         if(W==0||H==0)throw new Exception("No approved display");
+        if(type=="input-mode") {
+            string mode=Convert.ToString(m["mode"]);if(mode!="relative"&&mode!="absolute")throw new Exception("Invalid input mode");
+            ReleaseAll();RelativeMode=mode=="relative";return;
+        }
+        if(type=="relative") {
+            if(!RelativeMode)throw new Exception("Relative input is not active");
+            double dx=Number(m,"dx",-2048,2048),dy=Number(m,"dy",-2048,2048);
+            if(dx!=Math.Truncate(dx)||dy!=Math.Truncate(dy)||(dx==0&&dy==0))throw new Exception("Invalid relative input");
+            INPUT input=new INPUT();input.data.mi.dx=(int)dx;input.data.mi.dy=(int)dy;
+            input.data.mi.dwFlags=0x2001;Emit(input);
+            if(DryRun){RelativeEvents++;RelativeX+=(int)dx;RelativeY+=(int)dy;}return;
+        }
         if(type=="move") {
+            if(RelativeMode)throw new Exception("Absolute input is not active");
             double nx=Number(m,"x",0,1),ny=Number(m,"y",0,1);
             int vx=GetSystemMetrics(76),vy=GetSystemMetrics(77),vw=GetSystemMetrics(78),vh=GetSystemMetrics(79);
             INPUT input=new INPUT();
@@ -97,8 +112,8 @@ class InputAgent {
     static void Main(string[] args) {
         DryRun=Array.IndexOf(args,"--validate")>=0;
         try{SetProcessDpiAwarenessContext(new IntPtr(-4));}catch{}
-        Console.WriteLine(Json.Serialize(new {ready=true,dryRun=DryRun,inputBytes=Marshal.SizeOf(typeof(INPUT))}));
-        Timer timer=new Timer(delegate(object state){lock(Sync){if((DateTime.UtcNow-LastPing).TotalSeconds>5)ReleaseAll();}},null,1000,1000);
+        Console.WriteLine(Json.Serialize(new {ready=true,dryRun=DryRun,inputBytes=Marshal.SizeOf(typeof(INPUT)),relativeMouse=true}));
+        Timer timer=new Timer(delegate(object state){lock(Sync){if((DateTime.UtcNow-LastPing).TotalSeconds>5){ReleaseAll();RelativeMode=false;}}},null,1000,1000);
         try {
             string line;
             while((line=Console.ReadLine())!=null) {
@@ -106,6 +121,6 @@ class InputAgent {
                 try {lock(Sync){Process(Json.Deserialize<Dictionary<string,object>>(line));}Console.WriteLine("{\"ok\":true}");}
                 catch(Exception ex){Console.WriteLine(Json.Serialize(new{ok=false,error=ex.Message}));}
             }
-        } finally {timer.Dispose();lock(Sync){ReleaseAll();}}
+        } finally {timer.Dispose();lock(Sync){ReleaseAll();if(DryRun)Console.WriteLine(Json.Serialize(new{validation=true,relativeEvents=RelativeEvents,relativeX=RelativeX,relativeY=RelativeY,relativeFlags=0x2001}));}}
     }
 }

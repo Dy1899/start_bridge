@@ -1,6 +1,6 @@
 # start_bridge
 
-星桥远控 0.1.6。
+星桥远控 0.1.7。
 
 Windows 10/11 x64 桌面远程协助原型。使用自己的输入组件与连接服务，不依赖向日葵安装文件、账户或服务器。
 
@@ -38,9 +38,21 @@ npm run server
 
 内网 ws:// 测试会给 Chromium 视频协商附加 6 Mbps 启动码率提示，缩短保守启动期间的模糊过程；随后仍由拥塞控制动态调整，不设置最低码率，不影响公网 wss:// 协商。
 
-可运行 `node tests/media-browser-server.mjs`，再用浏览器打开 `http://127.0.0.1:18488/run?codec=auto&screen=1080`，或将 codec 改为 h264、vp8，screen 改为 1440。该测试播放生成的文字视频并记录输入消息，检查实际播放、画质切换、缩放滚动后的坐标和报告导出，不采集桌面，也不调用 Windows 输入组件；结果写入 runtime/clarity-browser-{codec}-{screen}.json。它不能替代两台真实电脑的性能测试。
+可运行 `node tests/media-browser-server.mjs`，再用浏览器打开 `http://127.0.0.1:18488/run?codec=auto&screen=1080`，或将 codec 改为 h264、vp8，screen 改为 1440。该测试播放生成的文字视频并记录输入消息，检查实际播放、画质切换、缩放滚动后的坐标和报告导出，不采集桌面，也不调用 Windows 输入组件；结果写入 runtime/gaming-browser-{codec}-{screen}.json。它不能替代两台真实电脑的性能测试。
 
 参数依据：[WebRTC 发送参数与接收缓冲](https://www.w3.org/TR/webrtc/)、[视频内容提示](https://www.w3.org/TR/mst-content-hint/)。
+
+## 游戏鼠标与帧间隔检查（0.1.7）
+
+双方升级后，控制端可点击“游戏鼠标”锁定本地光标，通过相对移动控制游戏视角。按 Esc、失焦、取消键鼠控制或结束连接会退出并释放按键；被控端仍需本机确认，并可随时 Ctrl+Alt+F12 断开。游戏鼠标只在对方新版输入组件报告支持后启用，仅观看会话不会启用。
+
+相对移动每 8 毫秒聚合，并在按键和鼠标按钮前刷新。移动、按键和模式切换使用同一条可靠有序通道；游戏相对移动不会进入可丢包的桌面悬停通道。切换模式时建立序号屏障，丢弃晚到的旧悬停。输入通道积压时退出游戏鼠标并释放按键。普通桌面控制保留原有悬停通道。
+
+优先请求无加速的本地相对移动，不支持时回退到普通相对移动；不修改 Windows 鼠标设置。远端通过 SendInput 的相对移动执行，不等于所有游戏都支持原始输入。未安装驱动、虚拟手柄或原生视频串流引擎，也未声称提升所有游戏的帧率。
+
+性能详情新增实际编解码路径提示与接收帧间隔均值、波动。仅识别已知实现名称；H.264、通用包装器名称或节能标志本身不能证明硬件加速。帧间隔来自接收端解码统计，静止画面也可能间隔变长，不等于输入到画面的总延迟。新字段随原有报告保存。
+
+接口依据：[Pointer Lock](https://www.w3.org/TR/pointerlock-2/)、[Windows 相对输入](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-mouseinput)、[WebRTC 统计](https://www.w3.org/TR/webrtc-stats/)。
 
 ## 显示清晰度（0.1.6）
 

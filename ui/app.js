@@ -6,6 +6,7 @@ import {CODEC_PREFERENCES,isCodecPreference,applyCodecPreference} from './codec-
 import {readPerformanceStats} from './performance.mjs';
 import {PerformanceView} from './performance-view.mjs';
 import {RemoteView} from './remote-view.mjs';
+import {GameMouse} from './game-mouse.mjs';
 const $=id=>document.getElementById(id),show=(id,on=true)=>$(id).classList.toggle('hidden',!on);
 window.__uiErrors=[];
 window.addEventListener('error',e=>window.__uiErrors.push(e.message));
@@ -14,8 +15,21 @@ let settings,ws,registered=false,reconnectTimer,peer,channel,stream,sessionInfo,
 let lastMove=0,dragging=false,localFailure=null,pointerChannel,moveSequence=0,pointerOrder=new PointerOrder();
 let activeProfile=DEFAULT_PROFILE,qualityBusy=false,remoteMediaSupport=false,lastDiagnostic=0,qualityRequestTimer;
 let performanceReference=null,performanceSequence=0,performancePeer=false;
+let nativeGameMouse=false,remoteGameMouse=false,hostGameMode=false;
 const performanceView=new PerformanceView(document,value=>window.bridge.savePerformance(value),toast);
 const remoteView=new RemoteView(document);
+const gameMouse=new GameMouse({document,video:$('remote-video'),canStart:()=>sessionInfo?.role==='controller'&&!sessionInfo.viewOnly&&$('capture-keys').checked&&remoteGameMouse&&channel?.readyState==='open'&&$('remote-video').videoWidth>0,
+  send:command=>{if(sessionInfo?.role!=='controller'||sessionInfo.viewOnly||channel?.readyState!=='open')return false;if(command.type==='relative'&&channel.bufferedAmount>8192)return false;sendControl(command.type==='input-mode'?{...command,seq:++moveSequence}:command);return true;},release:releaseInputs,
+  onState:()=>{updateGameUI();if(gameMouse.active){remoteView.setMode('fit');if(activeProfile!=='balanced'&&!$('session-quality').disabled){$('session-quality').value='balanced';$('session-quality').dispatchEvent(new Event('change'));}}},onError:message=>{toast(message,true);window.bridge.diagnostic?.({phase:'game-mouse',message}).catch(()=>{});}});
+function updateGameUI(){
+  const visible=sessionInfo?.role==='controller'&&!sessionInfo.viewOnly;show('game-toolbar',visible);
+  $('game-mouse').disabled=gameMouse.pending||(!gameMouse.active&&!(visible&&remoteGameMouse&&channel?.readyState==='open'&&$('capture-keys').checked&&$('remote-video').videoWidth>0));
+  $('game-mouse').textContent=gameMouse.active?'退出游戏鼠标（Esc）':gameMouse.pending?'正在锁定鼠标…':'游戏鼠标';
+  $('game-status').textContent=gameMouse.active?'已锁定光标，Esc 退出；失焦自动释放按键'+(gameMouse.rawRequested?'（已请求无加速移动）':'（系统默认相对移动）'):remoteGameMouse?'点击开启相对移动；进入游戏后再操作，Esc 退出':'等待对方新版输入组件就绪';
+}
+$('game-mouse').addEventListener('click',()=>gameMouse.active?gameMouse.stop():gameMouse.start());
+$('game-sensitivity').addEventListener('change',()=>{gameMouse.flush();const value=Number($('game-sensitivity').value);if([0.5,1,1.5,2].includes(value))gameMouse.sensitivity=value;});
+document.addEventListener('keydown',event=>{if((gameMouse.active||gameMouse.pending)&&event.code==='Escape'){event.preventDefault();event.stopPropagation();gameMouse.stop();}},true);
 for(const id of ['share-quality','session-quality'])for(const [value,p] of Object.entries(VIDEO_PROFILES)){const option=document.createElement('option');option.value=value;option.textContent=p.label;$(id).append(option);$(id).value=DEFAULT_PROFILE;}
 for(const [value,label] of Object.entries(CODEC_PREFERENCES)){const option=document.createElement('option');option.value=value;option.textContent=label;$('share-codec').append(option);}
 const heldKeys=new Set();
@@ -54,6 +68,7 @@ async function handle(m){
     $('peer-name').textContent=m.peerName;$('connection-mode').textContent=m.viewOnly?'仅观看':'可控制';$('connect-button').disabled=true;
     show('remote-stage',m.role==='controller');show('host-message',m.role==='host');show('start-share',m.role==='host');$('host-message').querySelector('h3').textContent='你正在提供远程协助';show('keyboard-option',m.role==='controller'&&!m.viewOnly);
     activeProfile=$('share-quality').value;remoteMediaSupport=false;lastDiagnostic=0;pointerOrder=new PointerOrder();moveSequence=0;lastMove=0;
+    nativeGameMouse=false;remoteGameMouse=false;hostGameMode=false;updateGameUI();
     performanceReference=null;performanceSequence=0;performancePeer=false;performanceView.start(m.role,activeProfile,$('share-codec').value);
     $('session-quality').value=activeProfile;$('session-quality').disabled=m.role==='controller';show('fullscreen',m.role==='controller');
     $('quality-status').textContent=m.role==='host'?'目标不超过屏幕原始尺寸；实际分辨率见状态栏':'画质切换需要对方使用新版；连接后自动检测';show('display-toolbar',m.role==='controller');
@@ -91,7 +106,7 @@ function attachChannel(dc){
   if(dc.label==='pointer'){
     if(sessionInfo?.role!=='host'||pointerChannel){dc.close();return;}
     pointerChannel=dc;
-    dc.onmessage=event=>{if(sessionInfo?.role!=='host'||typeof event.data!=='string'||event.data.length>2048)return;try{const command=JSON.parse(event.data);if(pointerOrder.accept(command,true))window.bridge.input(sessionInfo.sessionId,command);}catch{}};
+    dc.onmessage=event=>{if(sessionInfo?.role!=='host'||typeof event.data!=='string'||event.data.length>2048)return;try{const command=JSON.parse(event.data);if(!hostGameMode&&pointerOrder.accept(command,true))window.bridge.input(sessionInfo.sessionId,command);}catch{}};
     dc.onclose=()=>{if(pointerChannel===dc)pointerChannel=null;};return;
   }
   if(dc.label!=='control'||channel){dc.close();return;}
@@ -105,11 +120,16 @@ function attachChannel(dc){
       if(sessionInfo?.role==='host'){
         if(command.type==='media-hello'){performancePeer=command.performance===1;sendMediaState();return;}
         if(command.type==='media-quality'){if(isVideoProfile(command.profile))changeHostQuality(command.profile);return;}
+        if(command.type==='input-mode'){if(!nativeGameMouse||!['relative','absolute'].includes(command.mode)||!pointerOrder.barrier(command.seq))return;hostGameMode=command.mode==='relative';window.bridge.input(sessionInfo.sessionId,command);return;}
+        if(command.type==='relative'){if(nativeGameMouse&&hostGameMode)window.bridge.input(sessionInfo.sessionId,command);return;}
+        if(command.type==='release')hostGameMode=false;
+        if(command.type==='move'&&hostGameMode)return;
         if(command.type==='move'&&!pointerOrder.accept(command))return;
-        const position=clickPosition(command);if(position)window.bridge.input(sessionInfo.sessionId,position);
+        const position=hostGameMode?null:clickPosition(command);if(position)window.bridge.input(sessionInfo.sessionId,position);
         window.bridge.input(sessionInfo.sessionId,command);
       }else if(sessionInfo?.role==='controller'&&command.type==='media-state'&&command.protocol===1&&isVideoProfile(command.profile)){
         performancePeer=command.performance===1;
+        remoteGameMouse=command.gameMouse===1;if(!remoteGameMouse)gameMouse.stop();updateGameUI();
         activeProfile=command.profile;
         clearTimeout(qualityRequestTimer);remoteMediaSupport=true;$('session-quality').disabled=false;$('session-quality').value=command.profile;
         $('quality-status').textContent=command.error||(activeProfile==='detail'?'保留细字，最高 4K / 30 帧；不超过对方屏幕原始尺寸':'可随时切换画质；显示的分辨率和帧率为实际接收值');
@@ -120,7 +140,7 @@ function attachChannel(dc){
   dc.onclose=()=>{releaseInputs();if(sessionInfo)endSession(true);};
 }
 function sendControl(command){if(channel?.readyState==='open')channel.send(JSON.stringify(command));}
-function sendMediaState(error=''){sendControl({type:'media-state',protocol:1,profile:activeProfile,pointer:true,performance:1,error});}
+function sendMediaState(error=''){sendControl({type:'media-state',protocol:1,profile:activeProfile,pointer:true,performance:1,gameMouse:nativeGameMouse?1:0,error});}
 async function changeHostQuality(id){
   if(!isVideoProfile(id)||sessionInfo?.role!=='host')return;
   if(qualityBusy===peer){sendMediaState('正在切换画质，请稍后再试');return;}
@@ -184,6 +204,7 @@ $('start-share').addEventListener('click',async()=>{
 });
 function transmit(command){
   if(sessionInfo?.role!=='controller'||sessionInfo.viewOnly||!$('capture-keys').checked||channel?.readyState!=='open')return;
+  if(gameMouse.active&&channel.bufferedAmount>8192){gameMouse.fail('输入通道拥塞，已退出游戏鼠标。');return;}
   if(command.type==='move'){
     command={...command,seq:++moveSequence};
     if(!dragging&&pointerChannel?.readyState==='open'){
@@ -198,7 +219,7 @@ function transmit(command){
 function releaseInputs(){heldKeys.clear();dragging=false;if(channel?.readyState==='open'&&sessionInfo?.role==='controller')channel.send(JSON.stringify({type:'release'}));}
 async function endSession(notify,reasonCode='user-stop'){
   if(stopping)return;stopping=true;
-  try{if(notify)send({type:'disconnect',reasonCode});releaseInputs();await window.bridge.stopHost();sessionInfo=null;document.body.classList.remove('controlling');remoteView.reset();grantId=null;incoming=null;clearInterval(statsTimer);clearTimeout(connectionTimer);clearTimeout(qualityRequestTimer);performanceView.end();if(channel){channel.onclose=null;}if(pointerChannel){pointerChannel.onclose=null;pointerChannel.close();}pointerChannel=null;if(peer){peer.onconnectionstatechange=null;peer.close();}peer=null;if(channel)channel.close();channel=null;if(stream){for(const t of stream.getTracks()){t.onended=null;t.stop();}}stream=null;$('remote-video').srcObject=null;show('stage-placeholder');show('session-panel',false);show('idle-grid');$('connect-button').disabled=!registered;$('rotate').disabled=!registered;$('start-share').disabled=false;if($('incoming-dialog').open)$('incoming-dialog').close();performanceReference=null;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
+  try{if(notify)send({type:'disconnect',reasonCode});gameMouse.stop();releaseInputs();await window.bridge.stopHost();sessionInfo=null;document.body.classList.remove('controlling');remoteView.reset();grantId=null;incoming=null;clearInterval(statsTimer);clearTimeout(connectionTimer);clearTimeout(qualityRequestTimer);performanceView.end();if(channel){channel.onclose=null;}if(pointerChannel){pointerChannel.onclose=null;pointerChannel.close();}pointerChannel=null;if(peer){peer.onconnectionstatechange=null;peer.close();}peer=null;if(channel)channel.close();channel=null;if(stream){for(const t of stream.getTracks()){t.onended=null;t.stop();}}stream=null;$('remote-video').srcObject=null;show('stage-placeholder');show('session-panel',false);show('idle-grid');$('connect-button').disabled=!registered;$('rotate').disabled=!registered;$('start-share').disabled=false;if($('incoming-dialog').open)$('incoming-dialog').close();performanceReference=null;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
   finally{stopping=false;}
 }
 $('connect-form').addEventListener('submit',event=>{event.preventDefault();if(!registered||sessionInfo)return;const peerId=$('target-id').value.replace(/\s/g,''),secret=$('target-secret').value.trim();if(!/^\d{9}$/.test(peerId)||!/^\d{8}$/.test(secret)){toast('请输入 9 位识别码和 8 位访问码',true);return;}send({type:'connect',peerId,secret});$('target-secret').value='';});
@@ -216,14 +237,17 @@ $('settings-form').addEventListener('submit',async event=>{event.preventDefault(
 $('share-codec').addEventListener('change',async()=>{if(sessionInfo)return;try{settings=await window.bridge.saveSettings({...settings,codecPreference:$('share-codec').value});toast('编码偏好已保存，下次共享时生效');}catch(e){$('share-codec').value=settings.codecPreference||'auto';toast(e.message,true);}});
 const video=$('remote-video');
 function point(event,clamp=false){return normalizedPoint(video.getBoundingClientRect(),video.videoWidth,video.videoHeight,event.clientX,event.clientY,clamp);}
-video.addEventListener('pointermove',event=>{const now=performance.now();if(now-lastMove<8)return;const p=point(event,dragging);if(p){transmit({type:'move',...p});lastMove=now;}});
-video.addEventListener('pointerdown',event=>{const p=point(event);if(!p)return;event.preventDefault();video.focus({preventScroll:true});video.setPointerCapture(event.pointerId);dragging=true;transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'down',...p});});
-video.addEventListener('pointerup',event=>{const p=point(event,true);if(p)transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'up',...(p||{})});dragging=false;});
-video.addEventListener('pointercancel',releaseInputs);video.addEventListener('contextmenu',event=>event.preventDefault());
-video.addEventListener('wheel',event=>{if(!point(event))return;event.preventDefault();transmit({type:'wheel',delta:event.deltaY<0?120:-120});},{passive:false});
-video.addEventListener('keydown',event=>{if(!$('capture-keys').checked)return;event.preventDefault();if(!event.repeat&&!heldKeys.has(event.code)){heldKeys.add(event.code);transmit({type:'key',code:event.code,state:'down'});}});
-video.addEventListener('keyup',event=>{event.preventDefault();heldKeys.delete(event.code);transmit({type:'key',code:event.code,state:'up'});});
-video.addEventListener('blur',releaseInputs);window.addEventListener('blur',releaseInputs);$('capture-keys').addEventListener('change',releaseInputs);$('view-mode').addEventListener('change',releaseInputs);
+video.addEventListener('mousemove',event=>{if(gameMouse.active)gameMouse.move(event.movementX,event.movementY);});
+video.addEventListener('mousedown',event=>{if(!gameMouse.active)return;event.preventDefault();gameMouse.flush();if(!gameMouse.active)return;const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'down'});});
+video.addEventListener('mouseup',event=>{if(!gameMouse.active)return;event.preventDefault();gameMouse.flush();if(!gameMouse.active)return;const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'up'});});
+video.addEventListener('pointermove',event=>{if(gameMouse.active)return;const now=performance.now();if(now-lastMove<8)return;const p=point(event,dragging);if(p){transmit({type:'move',...p});lastMove=now;}});
+video.addEventListener('pointerdown',event=>{if(gameMouse.active)return;const p=point(event);if(!p)return;event.preventDefault();video.focus({preventScroll:true});video.setPointerCapture(event.pointerId);dragging=true;transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'down',...p});});
+video.addEventListener('pointerup',event=>{if(gameMouse.active)return;const p=point(event,true);if(p)transmit({type:'move',...p});const button=['left','middle','right'][event.button];if(button)transmit({type:'button',button,state:'up',...(p||{})});dragging=false;});
+video.addEventListener('pointercancel',()=>{gameMouse.stop();releaseInputs();});video.addEventListener('contextmenu',event=>event.preventDefault());
+video.addEventListener('wheel',event=>{if(gameMouse.active){event.preventDefault();gameMouse.flush();if(gameMouse.active)transmit({type:'wheel',delta:event.deltaY<0?120:-120});return;}if(!point(event))return;event.preventDefault();transmit({type:'wheel',delta:event.deltaY<0?120:-120});},{passive:false});
+video.addEventListener('keydown',event=>{if(!$('capture-keys').checked)return;event.preventDefault();if(gameMouse.active){gameMouse.flush();if(!gameMouse.active)return;}if(!event.repeat&&!heldKeys.has(event.code)){heldKeys.add(event.code);transmit({type:'key',code:event.code,state:'down'});}});
+video.addEventListener('keyup',event=>{event.preventDefault();if(gameMouse.active)gameMouse.flush();heldKeys.delete(event.code);transmit({type:'key',code:event.code,state:'up'});});
+video.addEventListener('blur',()=>{gameMouse.stop();releaseInputs();});window.addEventListener('blur',()=>{gameMouse.stop();releaseInputs();});$('capture-keys').addEventListener('change',()=>{gameMouse.stop();releaseInputs();updateGameUI();});$('view-mode').addEventListener('change',()=>{gameMouse.stop();releaseInputs();});video.addEventListener('resize',updateGameUI);document.addEventListener('visibilitychange',()=>{if(document.hidden){gameMouse.stop();releaseInputs();}});
 async function updateStats(){
   if(!sessionInfo)return;const seconds=Math.floor((Date.now()-startedAt)/1000);$('duration').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
   if(!peer||peer.connectionState!=='connected')return;
@@ -242,6 +266,7 @@ async function updateStats(){
   }catch{}
 }
 window.bridge.onEvent(event=>{
+  if(event.type==='input-ready'&&sessionInfo?.role==='host'){nativeGameMouse=event.relativeMouse===true;sendMediaState();}
   if(event.type==='force-stop'){
     if(event.reasonCode==='input-failed')failure('Windows 输入组件启动失败：'+event.message,{name:'InputAgentError',message:event.message},'input-component');
     endSession(true,event.reasonCode||'user-stop');

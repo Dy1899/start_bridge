@@ -54,3 +54,9 @@ test('two-ended performance expires old peer data and preserves a bounded report
   view.end();const count=view.history.length;view.update({direction:'receive'},'balanced',60);assert.equal(view.history.length,count);await view.save();assert.equal(exported.samples.length,60);assert.equal(exported.role,'controller');
   assert.match(performanceAdvice({limitation:'cpu'},null),/编码性能/);assert.match(performanceAdvice(null,{decodeMs:40},60),/解码/);assert.match(performanceAdvice(null,{packetLossPct:4},60),/丢包/);
 });
+test('decoded frame spacing uses interval counters and preserves unknowns for missing and reset statistics',()=>{
+  const base={id:'video',type:'inbound-rtp',kind:'video',timestamp:1000,framesDecoded:100,totalInterFrameDelay:1,totalSquaredInterFrameDelay:0.1};const first=readPerformanceStats(reportStats(base));assert.equal(first.sample.frameIntervalMs,null);
+  const next=readPerformanceStats(reportStats({...base,timestamp:2000,framesDecoded:120,totalInterFrameDelay:1.4,totalSquaredInterFrameDelay:0.11}),first.reference).sample;assert.equal(next.frameIntervalMs,20);assert.equal(next.frameJitterMs,10);
+  assert.equal(readPerformanceStats(reportStats({...base,timestamp:2000,framesDecoded:0,totalInterFrameDelay:0,totalSquaredInterFrameDelay:0}),first.reference).sample.frameIntervalMs,null);
+  const value=buildPerformanceReport({role:'controller',samples:[{at:100,local:{...next,password:'hidden'},remote:null}]},{version:'0.1.7'});assert.equal(value.samples[0].local.frameIntervalMs,20);assert.equal(value.samples[0].local.frameJitterMs,10);assert.equal('password' in value.samples[0].local,false);
+});

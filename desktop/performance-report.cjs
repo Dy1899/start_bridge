@@ -1,4 +1,4 @@
-const LIMITS={width:16384,height:16384,fps:500,captureFps:500,bitrateMbps:10000,rttMs:60000,encodeMs:60000,decodeMs:60000,bufferMs:60000,sendQueueMs:60000,packetLossPct:100,droppedFrames:1000000,availableMbps:10000};
+const LIMITS={width:16384,height:16384,fps:500,captureFps:500,bitrateMbps:10000,rttMs:60000,encodeMs:60000,decodeMs:60000,bufferMs:60000,sendQueueMs:60000,frameIntervalMs:60000,frameJitterMs:60000,packetLossPct:100,droppedFrames:1000000,availableMbps:10000};
 const profiles=['smooth','balanced','detail'];
 function sanitizeSample(value){
   if(!value||!['send','receive'].includes(value.direction))return null;

@@ -54,7 +54,7 @@ function startHelper(bounds) {
   const child = helper;
   let buffer = '';
   helper.stdout.setEncoding('utf8');
-  helper.stdout.on('data', data => { buffer += data; let i; while ((i = buffer.indexOf('\n')) >= 0) { const line=buffer.slice(0,i); buffer=buffer.slice(i+1); try { const m=JSON.parse(line); if (m.ok === false) emit('input-error',{message:m.error}); } catch {} } });
+  helper.stdout.on('data', data => { buffer += data; let i; while ((i = buffer.indexOf('\n')) >= 0) { const line=buffer.slice(0,i); buffer=buffer.slice(i+1); try { const m=JSON.parse(line); if(m.ready===true&&helper===child&&gate.active)emit('input-ready',{relativeMouse:m.relativeMouse===true});if (m.ok === false) emit('input-error',{message:m.error}); } catch {} } });
   let helperFailure='';
   helper.stderr.setEncoding('utf8');
   helper.stderr.on('data',data=>{helperFailure=(helperFailure+data).slice(-1600);});
@@ -145,8 +145,8 @@ app.whenReady().then(async()=>{
   const captureArmed=()=>captureAllowed&&!!gate.active&&Date.now()<capturePendingUntil;
   const permissionAllowed=(phase,webContents,permission,details)=>{
     const ownMainFrame=webContents===mainWindow?.webContents&&details?.isMainFrame===true&&details?.requestingUrl===uiUrl;
-    const allowed=(permission==='fullscreen'&&ownMainFrame)||allowCapturePermission({phase,webContents,permission,details,expectedWebContents:mainWindow?.webContents,uiUrl,armed:captureArmed(),electronMajor});
-    if(permission==='media'||permission==='display-capture')diagnostic('permission-'+phase,{name:permission,message:JSON.stringify({allowed,armed:captureArmed(),ownWindow:webContents===mainWindow?.webContents,mainFrame:details?.isMainFrame,ownDocument:details?.requestingUrl===uiUrl,mediaTypes:details?.mediaTypes,mediaType:details?.mediaType})});
+    const allowed=((permission==='fullscreen'||permission==='pointerLock')&&ownMainFrame)||allowCapturePermission({phase,webContents,permission,details,expectedWebContents:mainWindow?.webContents,uiUrl,armed:captureArmed(),electronMajor});
+    if(permission==='media'||permission==='display-capture'||permission==='pointerLock')diagnostic('permission-'+phase,{name:permission,message:JSON.stringify({allowed,armed:captureArmed(),ownWindow:webContents===mainWindow?.webContents,mainFrame:details?.isMainFrame,ownDocument:details?.requestingUrl===uiUrl,mediaTypes:details?.mediaTypes,mediaType:details?.mediaType})});
     return allowed;
   };
   session.defaultSession.setPermissionRequestHandler((webContents,permission,callback,details)=>callback(permissionAllowed('request',webContents,permission,details)));
